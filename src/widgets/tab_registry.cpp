@@ -70,9 +70,9 @@ TabRegistry::TabRegistry()
     );
 
     registerTab(
-        {"补正",     DisplayConfig::Mode::Original,       true},
-        [](PipelineManager*, ImageView* view, RoiManager* rm, QStatusBar*) -> QWidget* {
-            auto* tab = new TemplateTabWidget(view, rm, nullptr);
+        {"模板匹配",     DisplayConfig::Mode::Original,       true},
+        [](PipelineManager*, ImageView* view, RoiManager* rm, QStatusBar* statusBar) -> QWidget* {
+            auto* tab = new TemplateTabWidget(view, rm, statusBar, nullptr);
             tab->initialize();
             return tab;
         }

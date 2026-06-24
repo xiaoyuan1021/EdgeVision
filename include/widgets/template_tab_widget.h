@@ -13,6 +13,7 @@ namespace Ui
 class TemplateTabWidget;
 }
 
+class QStatusBar;
 class ImageView;
 class RoiManager;
 class BatchMatchDialog;
@@ -30,6 +31,7 @@ class TemplateTabWidget : public QWidget, public ISignalConnectable, public ITab
 public:
     explicit TemplateTabWidget(ImageView* view,
                                RoiManager* roiManager,
+                               QStatusBar* statusBar,
                                QWidget* parent = nullptr);
     ~TemplateTabWidget();
 
@@ -98,6 +100,7 @@ private:
     Ui::TemplateTabWidget* m_ui;
     ImageView* m_view;
     RoiManager* m_roiManager;
+    QStatusBar* m_statusBar;
     QWidget* m_parent;
 
     // 策略管理

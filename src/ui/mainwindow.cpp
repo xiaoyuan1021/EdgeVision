@@ -733,14 +733,14 @@ void MainWindow::setupMqtt()
         // 为capture采集的图像自动添加全图ROI配置（如果还没有ROI配置）
         QString currentImageId = m_roiManager.getCurrentImageId();
         if (!currentImageId.isEmpty() && m_roiManager.getRoiConfigsForImage(currentImageId).isEmpty()) {
-            RoiConfig defaultRoi;
-            defaultRoi.roiId = "capture_default_roi";
-            defaultRoi.roiName = "全图检测区域";
-            defaultRoi.roiRect = QRectF(0, 0, 1, 1);  // 全图（归一化坐标）
-            defaultRoi.pipelineConfig = m_pipelineManager->getConfigSnapshot();
-            defaultRoi.isActive = true;
-            m_roiManager.addRoiConfig(defaultRoi);
-            spdlog::info("[capture] 已为采集的图像添加默认全图ROI配置");
+            // RoiConfig defaultRoi;
+            // defaultRoi.roiId = "capture_default_roi";
+            // //defaultRoi.roiName = "全图检测区域";
+            // defaultRoi.roiRect = QRectF(0, 0, 1, 1);  // 全图（归一化坐标）
+            // defaultRoi.pipelineConfig = m_pipelineManager->getConfigSnapshot();
+            // defaultRoi.isActive = true;
+            // m_roiManager.addRoiConfig(defaultRoi);
+            // spdlog::info("[capture] 已为采集的图像添加默认全图ROI配置");
         }
         
         m_toast->showMessage("已采集新帧，正在处理...");

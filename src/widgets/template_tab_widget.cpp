@@ -8,6 +8,7 @@
 #include "data/inspection_profile.h"
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QStatusBar>
 #include <QFileDialog>
 #include <QDir>
 #include <QFileInfo>
@@ -18,11 +19,13 @@
 
 TemplateTabWidget::TemplateTabWidget(ImageView* view,
                                      RoiManager* roiManager,
+                                     QStatusBar* statusBar,
                                      QWidget* parent)
     : QWidget(parent)
     , m_ui(new Ui::TemplateTabWidget)
     , m_view(view)
     , m_roiManager(roiManager)
+    , m_statusBar(statusBar)
     , m_parent(parent)
     , m_currentType(MatchType::OpenCVTM)
 {
@@ -43,7 +46,7 @@ void TemplateTabWidget::initialize()
 
     m_ui->doubleSpinBox_minScore->setValue(0.8);
     m_ui->doubleSpinBox_minScore->setSingleStep(0.1);
-    m_ui->spinBox_matchNumber->setValue(1);
+    m_ui->spinBox_matchNumber->setValue(2);
 
     // 连接信号槽
     connect(m_ui->btn_drawTemplate, &QPushButton::clicked, this, &TemplateTabWidget::drawTemplate);
@@ -173,9 +176,10 @@ void TemplateTabWidget::createTemplateFromPolygon(const QVector<QPointF>& points
     bool success = m_currentStrategy->createTemplate(m_roiManager->getCurrentImage(), points, params);
 
     if (success) {
-        QMessageBox::information(m_parent, "成功", QString("模板创建成功！\n算法：%1").arg(getCurrentStrategyName()));
         m_view->clearPolygonDrawing();
         updateUIState(true);
+        if (m_statusBar)
+            m_statusBar->showMessage(QString("✓ 模板创建成功 [%1]").arg(getCurrentStrategyName()), 3000);
         emit templateCreated(name);
     } else {
         QMessageBox::warning(m_parent, "失败", "模板创建失败，请查看日志");

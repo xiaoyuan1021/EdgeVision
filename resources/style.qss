@@ -740,6 +740,17 @@ QDialog {
 }
 
 /* =========================
+   QInputDialog — 输入对话框
+   防止全局 QWidget 样式导致尺寸约束冲突
+   ========================= */
+QInputDialog {
+    background-color: #FFFFFF;
+    border-radius: 12px;
+    min-height: 0;
+    max-height: 16777215;
+}
+
+/* =========================
    QTextEdit 日志页
    ========================= */
 QTextEdit {

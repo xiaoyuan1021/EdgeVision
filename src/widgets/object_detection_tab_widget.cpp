@@ -153,13 +153,17 @@ void ObjectDetectionTabWidget::loadModelAsync()
             m_currentConfigPath = configPath;
 
             // 预热：消除首次推理延迟（优先预热ONNX Runtime GPU）
-            cv::Mat warmup(640, 640, CV_8UC3, cv::Scalar(114, 114, 114));
             if (m_ortInference.isLoaded()) {
-                m_ortInference.detect(warmup, 0.5f, 0.4f, 640, 640);
-                spdlog::info("[ObjectDetection] ONNX Runtime GPU warmup completed");
+                int w = m_ortInference.getModelImgWidth();
+                int h = m_ortInference.getModelImgHeight();
+                cv::Mat warmup(h, w, CV_8UC3, cv::Scalar(114, 114, 114));
+                m_ortInference.detect(warmup, 0.5f, 0.4f, w, h);
+                spdlog::info("[ObjectDetection] ONNX Runtime GPU warmup completed ({}x{})", w, h);
             } else if (m_dnnInference.isLoaded()) {
-                m_dnnInference.detect(warmup, 0.5f, 0.4f, 640, 640);
-                spdlog::info("[ObjectDetection] OpenCV DNN warmup completed");
+                cv::Size inputSize = m_dnnInference.getModelInputSize();
+                cv::Mat warmup(inputSize.height, inputSize.width, CV_8UC3, cv::Scalar(114, 114, 114));
+                m_dnnInference.detect(warmup, 0.5f, 0.4f, inputSize.width, inputSize.height);
+                spdlog::info("[ObjectDetection] OpenCV DNN warmup completed ({}x{})", inputSize.width, inputSize.height);
             }
 
             QString msg;
@@ -206,7 +210,8 @@ std::vector<DetectionResult> ObjectDetectionTabWidget::runDetection(const cv::Ma
         return m_ortInference.detect(image,
             getConfidenceThreshold(),
             getNmsThreshold(),
-            640, 640);
+            m_ortInference.getModelImgWidth(),
+            m_ortInference.getModelImgHeight());
     }
 
     // 回退到 OpenCV DNN
@@ -231,7 +236,8 @@ std::vector<DetectionResult> ObjectDetectionTabWidget::runDetectionOrt(const cv:
         return m_ortInference.detect(image,
             getConfidenceThreshold(),
             getNmsThreshold(),
-            640, 640);
+            m_ortInference.getModelImgWidth(),
+            m_ortInference.getModelImgHeight());
     }
 
     // 回退到 OpenCV DNN
