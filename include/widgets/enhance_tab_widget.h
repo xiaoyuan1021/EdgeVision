@@ -22,8 +22,10 @@ public:
     ~EnhanceTabWidget();
 
     // 配置管理
-    void getEnhanceConfig(int& brightness, int& contrast, int& gamma, int& sharpen) const;
-    void setEnhanceConfig(int brightness, int contrast, int gamma, int sharpen);
+    void getEnhanceConfig(int& brightness, int& contrast, int& gamma, int& sharpen,
+                          bool& claheEnabled, int& claheClipLimit, int& claheGridSize) const;
+    void setEnhanceConfig(int brightness, int contrast, int gamma, int sharpen,
+                          bool claheEnabled, int claheClipLimit, int claheGridSize);
 
     // IConfigurableTab 接口实现
     void saveToConfig(PipelineConfig& config) const override;

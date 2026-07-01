@@ -21,6 +21,8 @@ public:
     cv::Mat executeAlgorithmQueue(const cv::Mat&src,const QVector<AlgorithmStep>&queue);
 
     cv::Mat adjustParameter(const cv::Mat &src, int brightness, double contrast,double gamma,double sharpen);
+    
+    cv::Mat applyClahe(const cv::Mat& src, bool enabled, double clipLimit, int gridSize);
 
     cv::Mat filterRGB(const cv::Mat& src,
                       int rLow, int rHigh,

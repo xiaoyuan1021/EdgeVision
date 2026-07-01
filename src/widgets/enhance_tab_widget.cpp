@@ -39,12 +39,21 @@ EnhanceTabWidget::EnhanceTabWidget(IPipelineAccess* pipelineAccess, QWidget* par
     m_ui->spinBox_sharpen->setRange(0, 500);
     m_ui->spinBox_sharpen->setValue(100);
     bindSliderAndSpinBox(m_ui->Slider_sharpen, m_ui->spinBox_sharpen);
+    
+    // CLAHE 控件初始化
+    m_ui->Slider_claheClip->setRange(0, 100);
+    m_ui->Slider_claheClip->setValue(40);
+    m_ui->Slider_claheGrid->setRange(4, 32);
+    m_ui->Slider_claheGrid->setValue(8);
 
     // 所有 slider 变化统一走 onSliderChanged
     connect(m_ui->Slider_brightness, &QSlider::valueChanged, this, &EnhanceTabWidget::onSliderChanged);
     connect(m_ui->Slider_contrast, &QSlider::valueChanged, this, &EnhanceTabWidget::onSliderChanged);
     connect(m_ui->Slider_gamma, &QSlider::valueChanged, this, &EnhanceTabWidget::onSliderChanged);
     connect(m_ui->Slider_sharpen, &QSlider::valueChanged, this, &EnhanceTabWidget::onSliderChanged);
+    connect(m_ui->Slider_claheClip, &QSlider::valueChanged, this, &EnhanceTabWidget::onSliderChanged);
+    connect(m_ui->Slider_claheGrid, &QSlider::valueChanged, this, &EnhanceTabWidget::onSliderChanged);
+    connect(m_ui->checkBox_clahe, &QCheckBox::toggled, this, &EnhanceTabWidget::onSliderChanged);
 
     m_enhancementHistory.push(captureState());
     updateUndoUi();
@@ -63,6 +72,9 @@ void EnhanceTabWidget::on_btn_resetBC_clicked()
     m_ui->Slider_contrast->setValue(100);
     m_ui->Slider_gamma->setValue(100);
     m_ui->Slider_sharpen->setValue(100);
+    m_ui->checkBox_clahe->setChecked(false);
+    m_ui->Slider_claheClip->setValue(40);
+    m_ui->Slider_claheGrid->setValue(8);
     m_pipeline->resetConfigToDefaults();
 
     EnhancementState snapshot = captureState();
@@ -108,6 +120,9 @@ EnhanceTabWidget::EnhancementState EnhanceTabWidget::captureState() const
     state.contrast   = m_ui->Slider_contrast->value();
     state.gamma      = m_ui->Slider_gamma->value();
     state.sharpen    = m_ui->Slider_sharpen->value();
+    state.claheEnabled = m_ui->checkBox_clahe->isChecked();
+    state.claheClipLimit = m_ui->Slider_claheClip->value();
+    state.claheGridSize = m_ui->Slider_claheGrid->value();
     return state;
 }
 
@@ -117,6 +132,9 @@ void EnhanceTabWidget::applyState(const EnhancementState &state)
     const QSignalBlocker b2(m_ui->Slider_contrast);
     const QSignalBlocker b3(m_ui->Slider_gamma);
     const QSignalBlocker b4(m_ui->Slider_sharpen);
+    const QSignalBlocker b5(m_ui->Slider_claheClip);
+    const QSignalBlocker b6(m_ui->Slider_claheGrid);
+    const QSignalBlocker cb1(m_ui->checkBox_clahe);
     const QSignalBlocker sb1(m_ui->spinBox_brightness);
     const QSignalBlocker sb2(m_ui->spinBox_contrast);
     const QSignalBlocker sb3(m_ui->spinBox_gamma);
@@ -126,6 +144,9 @@ void EnhanceTabWidget::applyState(const EnhancementState &state)
     m_ui->Slider_contrast->setValue(state.contrast);
     m_ui->Slider_gamma->setValue(state.gamma);
     m_ui->Slider_sharpen->setValue(state.sharpen);
+    m_ui->checkBox_clahe->setChecked(state.claheEnabled);
+    m_ui->Slider_claheClip->setValue(state.claheClipLimit);
+    m_ui->Slider_claheGrid->setValue(state.claheGridSize);
 
     m_ui->spinBox_brightness->setValue(state.brightness);
     m_ui->spinBox_contrast->setValue(state.contrast);
@@ -139,6 +160,9 @@ void EnhanceTabWidget::applyState(const EnhancementState &state)
         cfg.enhance.contrast = state.contrast;
         cfg.enhance.gamma = state.gamma;
         cfg.enhance.sharpen = state.sharpen;
+        cfg.enhance.claheEnabled = state.claheEnabled;
+        cfg.enhance.claheClipLimit = state.claheClipLimit;
+        cfg.enhance.claheGridSize = state.claheGridSize;
         m_pipeline->setConfig(cfg);
     }
 
@@ -169,6 +193,9 @@ void EnhanceTabWidget::syncConfigToPipeline()
     cfg.enhance.contrast = current.contrast;
     cfg.enhance.gamma = current.gamma;
     cfg.enhance.sharpen = current.sharpen;
+    cfg.enhance.claheEnabled = current.claheEnabled;
+    cfg.enhance.claheClipLimit = current.claheClipLimit;
+    cfg.enhance.claheGridSize = current.claheGridSize;
     m_pipeline->setConfig(cfg);
 }
 
@@ -208,6 +235,21 @@ void EnhanceTabWidget::previewEnhance()
         cv::GaussianBlur(result, blurred, cv::Size(0, 0), 1.0);
         cv::addWeighted(result, 1.0 + sharpenVal, blurred, -sharpenVal, 0, result);
     }
+    
+    // CLAHE 处理
+    if (m_ui->checkBox_clahe->isChecked()) {
+        double clipLimit = m_ui->Slider_claheClip->value() / 20.0;
+        int gridSize = m_ui->Slider_claheGrid->value();
+        
+        cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(clipLimit, cv::Size(gridSize, gridSize));
+        cv::Mat lab;
+        cv::cvtColor(result, lab, cv::COLOR_BGR2Lab);
+        std::vector<cv::Mat> labChannels;
+        cv::split(lab, labChannels);
+        clahe->apply(labChannels[0], labChannels[0]);
+        cv::merge(labChannels, lab);
+        cv::cvtColor(lab, result, cv::COLOR_Lab2BGR);
+    }
 
     m_view->setImage(ImageUtils::matToQImage(result));
 }
@@ -217,22 +259,30 @@ EnhanceTabWidget::~EnhanceTabWidget()
     delete m_ui;
 }
 
-void EnhanceTabWidget::getEnhanceConfig(int& brightness, int& contrast, int& gamma, int& sharpen) const
+void EnhanceTabWidget::getEnhanceConfig(int& brightness, int& contrast, int& gamma, int& sharpen,
+                                         bool& claheEnabled, int& claheClipLimit, int& claheGridSize) const
 {
     EnhancementState state = captureState();
     brightness = state.brightness;
     contrast = state.contrast;
     gamma = state.gamma;
     sharpen = state.sharpen;
+    claheEnabled = state.claheEnabled;
+    claheClipLimit = state.claheClipLimit;
+    claheGridSize = state.claheGridSize;
 }
 
-void EnhanceTabWidget::setEnhanceConfig(int brightness, int contrast, int gamma, int sharpen)
+void EnhanceTabWidget::setEnhanceConfig(int brightness, int contrast, int gamma, int sharpen,
+                                         bool claheEnabled, int claheClipLimit, int claheGridSize)
 {
     EnhancementState state;
     state.brightness = brightness;
     state.contrast = contrast;
     state.gamma = gamma;
     state.sharpen = sharpen;
+    state.claheEnabled = claheEnabled;
+    state.claheClipLimit = claheClipLimit;
+    state.claheGridSize = claheGridSize;
     applyStateQuiet(state);
 }
 
@@ -243,6 +293,9 @@ void EnhanceTabWidget::applyStateQuiet(const EnhancementState &state)
     const QSignalBlocker b2(m_ui->Slider_contrast);
     const QSignalBlocker b3(m_ui->Slider_gamma);
     const QSignalBlocker b4(m_ui->Slider_sharpen);
+    const QSignalBlocker b5(m_ui->Slider_claheClip);
+    const QSignalBlocker b6(m_ui->Slider_claheGrid);
+    const QSignalBlocker cb1(m_ui->checkBox_clahe);
     const QSignalBlocker sb1(m_ui->spinBox_brightness);
     const QSignalBlocker sb2(m_ui->spinBox_contrast);
     const QSignalBlocker sb3(m_ui->spinBox_gamma);
@@ -252,6 +305,9 @@ void EnhanceTabWidget::applyStateQuiet(const EnhancementState &state)
     m_ui->Slider_contrast->setValue(state.contrast);
     m_ui->Slider_gamma->setValue(state.gamma);
     m_ui->Slider_sharpen->setValue(state.sharpen);
+    m_ui->checkBox_clahe->setChecked(state.claheEnabled);
+    m_ui->Slider_claheClip->setValue(state.claheClipLimit);
+    m_ui->Slider_claheGrid->setValue(state.claheGridSize);
 
     m_ui->spinBox_brightness->setValue(state.brightness);
     m_ui->spinBox_contrast->setValue(state.contrast);
@@ -264,6 +320,9 @@ void EnhanceTabWidget::applyStateQuiet(const EnhancementState &state)
     cfg.enhance.contrast = state.contrast;
     cfg.enhance.gamma = state.gamma;
     cfg.enhance.sharpen = state.sharpen;
+    cfg.enhance.claheEnabled = state.claheEnabled;
+    cfg.enhance.claheClipLimit = state.claheClipLimit;
+    cfg.enhance.claheGridSize = state.claheGridSize;
     m_pipeline->setConfig(cfg);
 }
 
@@ -286,6 +345,9 @@ void EnhanceTabWidget::saveToConfig(PipelineConfig& config) const
     config.enhance.contrast   = m_ui->Slider_contrast->value();
     config.enhance.gamma      = m_ui->Slider_gamma->value();
     config.enhance.sharpen    = m_ui->Slider_sharpen->value();
+    config.enhance.claheEnabled = m_ui->checkBox_clahe->isChecked();
+    config.enhance.claheClipLimit = m_ui->Slider_claheClip->value();
+    config.enhance.claheGridSize = m_ui->Slider_claheGrid->value();
 }
 
 void EnhanceTabWidget::loadFromConfig(const PipelineConfig& config)
@@ -294,6 +356,9 @@ void EnhanceTabWidget::loadFromConfig(const PipelineConfig& config)
         config.enhance.brightness,
         config.enhance.contrast,
         config.enhance.gamma,
-        config.enhance.sharpen
+        config.enhance.sharpen,
+        config.enhance.claheEnabled,
+        config.enhance.claheClipLimit,
+        config.enhance.claheGridSize
     );
 }

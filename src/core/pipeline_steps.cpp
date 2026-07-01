@@ -65,6 +65,17 @@ void StepEnhance::run(PipelineContext& ctx)
                 ctx.config->enhance.gamma / 100.0,
                 ctx.config->enhance.sharpen / 100.0
                 );
+            
+            // CLAHE 处理
+            if (ctx.config->enhance.claheEnabled) {
+                ctx.enhanced = proc_->applyClahe(
+                    ctx.enhanced,
+                    ctx.config->enhance.claheEnabled,
+                    ctx.config->enhance.claheClipLimit / 20.0,
+                    ctx.config->enhance.claheGridSize
+                );
+            }
+            
             ctx.visualBase = ctx.enhanced;
         } catch (const cv::Exception& ex) {
 spdlog::error("Enhance OpenCV错误: {}", ex.what());
@@ -385,6 +396,115 @@ spdlog::error("LSD OpenCV错误: {}", ex.what());
     }
 }
 
+// 合并共线线段并用最小二乘拟合
+static void mergeAndFitLines(const std::vector<cv::Vec4f>& srcLines,
+                              std::vector<cv::Vec4f>& dstLines,
+                              double angleThresh = 2.0,    // 角度差阈值（度）
+                              double distThresh = 20.0)    // 端点距离阈值（像素）
+{
+    if (srcLines.empty()) return;
+    
+    // 1. 计算每条线段的角度（归一化到0~180度）
+    struct LineInfo {
+        cv::Vec4f line;
+        double angle;
+        double length;
+    };
+    std::vector<LineInfo> lineInfos;
+    for (const auto& l : srcLines) {
+        double dx = l[2] - l[0];
+        double dy = l[3] - l[1];
+        double angle = std::atan2(dy, dx) * 180.0 / CV_PI;
+        if (angle < 0) angle += 180.0;
+        double length = std::sqrt(dx * dx + dy * dy);
+        lineInfos.push_back({l, angle, length});
+    }
+    
+    // 2. 按角度排序
+    std::sort(lineInfos.begin(), lineInfos.end(),
+              [](const LineInfo& a, const LineInfo& b) { return a.angle < b.angle; });
+    
+    // 3. 聚类：角度差 < angleThresh 的归为一类
+    std::vector<std::vector<int>> clusters;
+    std::vector<bool> assigned(lineInfos.size(), false);
+    
+    for (size_t i = 0; i < lineInfos.size(); ++i) {
+        if (assigned[i]) continue;
+        std::vector<int> cluster;
+        cluster.push_back(static_cast<int>(i));
+        assigned[i] = true;
+        
+        for (size_t j = i + 1; j < lineInfos.size(); ++j) {
+            if (assigned[j]) continue;
+            double diff = std::abs(lineInfos[j].angle - lineInfos[i].angle);
+            if (diff > 90.0) diff = 180.0 - diff;  // 处理0/180度环绕
+            if (diff < angleThresh) {
+                // 进一步检查端点距离：至少一个端点在已有线段附近
+                bool nearEnough = false;
+                for (int idx : cluster) {
+                    cv::Point2f p1(lineInfos[idx].line[0], lineInfos[idx].line[1]);
+                    cv::Point2f p2(lineInfos[idx].line[2], lineInfos[idx].line[3]);
+                    cv::Point2f q1(lineInfos[j].line[0], lineInfos[j].line[1]);
+                    cv::Point2f q2(lineInfos[j].line[2], lineInfos[j].line[3]);
+                    
+                    double d11 = cv::norm(p1 - q1);
+                    double d12 = cv::norm(p1 - q2);
+                    double d21 = cv::norm(p2 - q1);
+                    double d22 = cv::norm(p2 - q2);
+                    double minDist = std::min({d11, d12, d21, d22});
+                    
+                    if (minDist < distThresh) {
+                        nearEnough = true;
+                        break;
+                    }
+                }
+                if (nearEnough) {
+                    cluster.push_back(static_cast<int>(j));
+                    assigned[j] = true;
+                }
+            }
+        }
+        clusters.push_back(cluster);
+    }
+    
+    // 4. 对每个聚类用 fitLine 拟合
+    dstLines.clear();
+    for (const auto& cluster : clusters) {
+        if (cluster.size() == 1) {
+            // 单条线段直接保留
+            dstLines.push_back(lineInfos[cluster[0]].line);
+            continue;
+        }
+        
+        // 收集聚类中所有端点
+        std::vector<cv::Point2f> points;
+        for (int idx : cluster) {
+            points.push_back(cv::Point2f(lineInfos[idx].line[0], lineInfos[idx].line[1]));
+            points.push_back(cv::Point2f(lineInfos[idx].line[2], lineInfos[idx].line[3]));
+        }
+        
+        // 最小二乘拟合
+        cv::Vec4f fitVec;
+        cv::fitLine(points, fitVec, cv::DIST_L2, 0, 0.01, 0.01);
+        
+        // fitVec = (vx, vy, x0, y0) 其中(vx,vy)是方向向量，(x0,y0)是线上一点
+        cv::Point2f dir(fitVec[0], fitVec[1]);
+        cv::Point2f base(fitVec[2], fitVec[3]);
+        
+        // 将所有端点投影到拟合线上，找最远的两个作为新端点
+        float minProj = FLT_MAX, maxProj = -FLT_MAX;
+        for (const auto& pt : points) {
+            float proj = (pt.x - base.x) * dir.x + (pt.y - base.y) * dir.y;
+            minProj = std::min(minProj, proj);
+            maxProj = std::max(maxProj, proj);
+        }
+        
+        cv::Point2f newP1(base.x + minProj * dir.x, base.y + minProj * dir.y);
+        cv::Point2f newP2(base.x + maxProj * dir.x, base.y + maxProj * dir.y);
+        dstLines.push_back(cv::Vec4f(newP1.x, newP1.y, newP2.x, newP2.y));
+    }
+}
+
 static void detectLinesEDlines(const cv::Mat& src, std::vector<cv::Vec4f>& lines)
 {
     if (src.empty()) return;
@@ -403,10 +523,10 @@ static void detectLinesEDlines(const cv::Mat& src, std::vector<cv::Vec4f>& lines
             }
         }
     } catch (const cv::Exception& ex) {
-spdlog::error("EDlines OpenCV错误: {}", ex.what());
+        spdlog::error("EDlines OpenCV错误: {}", ex.what());
     } catch (...) {
         spdlog::info("[EDlines] 未知异常");
-    spdlog::error("EDlines 未知异常");
+        spdlog::error("EDlines 未知异常");
     }
 }
 
@@ -448,8 +568,15 @@ void StepLineDetector::runLineDetect(PipelineContext& ctx)
             detectLinesHoughP(edges, ctx.config, lines);
         } else if (ctx.config->lineDetect.algorithm == 1) {
             detectLinesLSD(srcGray, lines);
+            // LSD输出短线段，合并共线段并拟合
+            std::vector<cv::Vec4f> merged;
+            mergeAndFitLines(lines, merged, 5.0, 20.0);
+            lines = merged;
         } else if (ctx.config->lineDetect.algorithm == 2) {
             detectLinesEDlines(srcGray, lines);
+            std::vector<cv::Vec4f> merged;
+            mergeAndFitLines(lines, merged, 5.0, 20.0);
+            lines = merged;
         }
 
         ctx.lineDetectImage = srcColor.clone();
@@ -463,7 +590,7 @@ void StepLineDetector::runLineDetect(PipelineContext& ctx)
 
         ctx.totalLineCount = static_cast<int>(lines.size());
     } catch (const cv::Exception& ex) {
-spdlog::error("LineDetector OpenCV错误: {}", ex.what());
+        spdlog::error("LineDetector OpenCV错误: {}", ex.what());
         ctx.reason = "直线检测失败";
     } catch (...) {
         spdlog::info("[LineDetector] 未知异常");

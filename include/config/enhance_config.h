@@ -17,12 +17,20 @@ struct EnhanceConfig
     int contrast = 100;    // 对比度 (0 ~ 300)，100 = 100%
     int gamma = 100;       // 伽马值 (10 ~ 300)，100 = 1.0
     int sharpen = 100;     // 锐化 (0 ~ 500)，100 = 1.0
+    
+    // CLAHE 配置
+    bool claheEnabled = false;   // CLAHE 启用开关
+    int claheClipLimit = 40;     // 裁剪限制 (0 ~ 100)，40 = 2.0 (÷20)
+    int claheGridSize = 8;       // 网格大小 (4 ~ 32)
 
     bool operator==(const EnhanceConfig& o) const {
         return brightness == o.brightness &&
                contrast == o.contrast &&
                gamma == o.gamma &&
-               sharpen == o.sharpen;
+               sharpen == o.sharpen &&
+               claheEnabled == o.claheEnabled &&
+               claheClipLimit == o.claheClipLimit &&
+               claheGridSize == o.claheGridSize;
     }
 
     QJsonObject toJson() const {
@@ -31,6 +39,9 @@ struct EnhanceConfig
         obj["contrast"] = contrast;
         obj["gamma"] = gamma;
         obj["sharpen"] = sharpen;
+        obj["claheEnabled"] = claheEnabled;
+        obj["claheClipLimit"] = claheClipLimit;
+        obj["claheGridSize"] = claheGridSize;
         return obj;
     }
 
@@ -39,5 +50,8 @@ struct EnhanceConfig
         contrast = obj["contrast"].toInt(100);
         gamma = obj["gamma"].toInt(100);
         sharpen = obj["sharpen"].toInt(100);
+        claheEnabled = obj["claheEnabled"].toBool(false);
+        claheClipLimit = obj["claheClipLimit"].toInt(40);
+        claheGridSize = obj["claheGridSize"].toInt(8);
     }
 };

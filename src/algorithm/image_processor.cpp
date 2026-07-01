@@ -135,6 +135,30 @@ cv::Mat ImageProcessor::adjustParameter(const cv::Mat &src, int brightness, doub
     }
 }
 
+cv::Mat ImageProcessor::applyClahe(const cv::Mat& src, bool enabled, double clipLimit, int gridSize)
+{
+    if (!enabled || src.empty()) return src;
+    
+    try {
+        cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(clipLimit, cv::Size(gridSize, gridSize));
+        cv::Mat lab;
+        cv::cvtColor(src, lab, cv::COLOR_BGR2Lab);
+        std::vector<cv::Mat> labChannels;
+        cv::split(lab, labChannels);
+        clahe->apply(labChannels[0], labChannels[0]);
+        cv::merge(labChannels, lab);
+        cv::Mat result;
+        cv::cvtColor(lab, result, cv::COLOR_Lab2BGR);
+        return result;
+    } catch (const cv::Exception& ex) {
+        spdlog::error("CLAHE处理错误: {}", ex.what());
+        return src;
+    } catch (...) {
+        spdlog::error("CLAHE处理未知异常");
+        return src;
+    }
+}
+
 cv::Mat ImageProcessor::filterRGB(const cv::Mat &src, int rLow, int rHigh, int gLow, int gHigh, int bLow, int bHigh)
 {
     if(src.empty())
