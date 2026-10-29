@@ -19,4 +19,15 @@ remote command validation/publishing and SSE disconnect cleanup. HTTP tests
 mock external effects and do not start a server or connect to a broker.
 MQTT boundary tests also cover invalid UTF-8/JSON shapes, malformed result fields,
 deduplication cache eviction, timeout thresholds and result persistence failures.
-Remaining coverage includes administrative routes and additional schema boundaries.
+Administrative route integration tests cover ROI add/update/rename/delete,
+device updates, clearing the temporary database, exports, diagnostics, statistics
+reloads and simulated message counts. They patch both database-path references.
+
+Collect production-only statement and branch coverage from the repository root:
+
+```powershell
+python -m pytest cloud_dashboard/tests --cov --cov-config=cloud_dashboard/.coveragerc --cov-report=term-missing
+```
+
+Coverage is not a completion criterion by itself. Startup behavior, error paths
+and additional schema boundaries still need review.

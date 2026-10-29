@@ -1,24 +1,7 @@
-import importlib
 import json
-import logging
 from unittest.mock import Mock
 
 import pytest
-
-
-@pytest.fixture
-def api(monkeypatch, state):
-    # Importing app otherwise opens dashboard.log; keep test IO isolated.
-    monkeypatch.setattr(logging, "FileHandler", lambda *a, **k: logging.NullHandler())
-    module = importlib.import_module("app")
-    monkeypatch.setattr(module, "app_state", state)
-    monkeypatch.setitem(module.app.config, "TESTING", True)
-    return module
-
-
-@pytest.fixture
-def client(api):
-    return api.app.test_client()
 
 
 def test_empty_status(client):

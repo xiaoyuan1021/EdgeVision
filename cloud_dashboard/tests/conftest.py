@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 def database(tmp_path, monkeypatch):
     import db
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "test.db"))
+    import config
+    monkeypatch.setattr(config, "DB_PATH", db.DB_PATH)
     db.init_db()
     return db
 
@@ -38,3 +40,26 @@ def handler(state, monkeypatch):
     for name in ("db_upsert_device", "db_insert_result", "db_insert_heartbeat"):
         monkeypatch.setattr(mqtt_handler, name, Mock())
     return mqtt_handler.MQTTHandler(state)
+
+
+import importlib
+import logging
+
+
+@pytest.fixture
+def api(monkeypatch, state):
+    # Importing app otherwise opens dashboard.log; keep test IO isolated.
+    monkeypatch.setattr(logging, "FileHandler", lambda *a, **k: logging.NullHandler())
+    module = importlib.import_module("app")
+    monkeypatch.setattr(module, "app_state", state)
+    from mqtt_handler import MQTTHandler
+    monkeypatch.setattr(module, "handler", MQTTHandler(state))
+    monkeypatch.setitem(module.app.config, "TESTING", True)
+    return module
+
+
+@pytest.fixture
+def client(api):
+    return api.app.test_client()
+
+

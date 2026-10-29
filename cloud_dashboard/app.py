@@ -357,7 +357,11 @@ def api_debug_update_roi():
         if not old_name:
             return jsonify({"error": "请指定要更新的ROI"}), 400
         with app_state["data_lock"]:
-            old_data = app_state["stats"]["by_roi"].get(new_name, {"total": 0, "passed": 0, "failed": 0})
+            old_data = dict(app_state["stats"]["by_roi"].get(old_name, {"total": 0, "passed": 0, "failed": 0}))
+            if old_name != new_name:
+                destination = app_state["stats"]["by_roi"].get(new_name, {})
+                for key in ("total", "passed", "failed"):
+                    old_data[key] += destination.get(key, 0)
             if old_name in app_state["stats"]["by_roi"] and old_name != new_name:
                 del app_state["stats"]["by_roi"][old_name]
             app_state["stats"]["by_roi"][new_name] = {"total": total, "passed": passed, "failed": total - passed}
@@ -390,8 +394,8 @@ def api_debug_update_roi():
             else:
                 for idx, row in enumerate(old_records):
                     new_passed = 1 if idx < passed else 0
-                    if row["passed"] != new_passed:
-                        conn.execute("UPDATE results SET passed=? WHERE id=?", (new_passed, row["id"]))
+                    if row[1] != new_passed:
+                        conn.execute("UPDATE results SET passed=? WHERE id=?", (new_passed, row[0]))
             conn.commit()
         finally:
             conn.close()
