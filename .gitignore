@@ -38,6 +38,10 @@ build_zxing/*
 .agents/*
 skills-lock.json
 *.pnm
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
 *.db
 docs/*
 projects/*

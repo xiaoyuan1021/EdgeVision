@@ -6,6 +6,7 @@ import json
 import queue
 import time
 import threading
+from collections import deque
 from datetime import datetime
 
 from config import MQTT_CONFIG, DEVICE_TIMEOUT_SECONDS
@@ -19,6 +20,7 @@ class MQTTHandler:
     def __init__(self, app_state):
         self.s = app_state
         self._recent_results = set()
+        self._recent_order = deque()
         self._recent_lock = threading.Lock()
 
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
@@ -42,7 +44,9 @@ class MQTTHandler:
     def on_message(self, client, userdata, msg):
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
+        if not isinstance(payload, dict):
             return
         if msg.topic == MQTT_CONFIG["topics"]["heartbeat"]:
             self._handle_heartbeat(payload)
@@ -50,6 +54,8 @@ class MQTTHandler:
             self._handle_result(payload)
 
     def _handle_heartbeat(self, payload):
+        if not isinstance(payload.get("deviceId", "unknown"), str):
+            return
         device_id = payload.get("deviceId", "unknown")
         now = time.time()
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -76,14 +82,29 @@ class MQTTHandler:
         self._broadcast_sse("heartbeat", {"deviceId": device_id})
 
     def _handle_result(self, payload):
+        # Validate before updating deduplication, counters or device state.
+        for field in ("reportId", "deviceId", "roiName", "imageName", "dateTime", "failReason"):
+            if field in payload and not isinstance(payload[field], str):
+                return
+        if not isinstance(payload.get("passed", True), bool):
+            return
+        items = payload.get("itemResults", [])
+        if not isinstance(items, list):
+            return
+        for item in items:
+            if (not isinstance(item, dict)
+                    or not isinstance(item.get("passed", True), bool)
+                    or not isinstance(item.get("itemName", ""), str)):
+                return
         report_id = payload.get("reportId", "")
         if report_id:
             with self._recent_lock:
                 if report_id in self._recent_results:
                     return
                 self._recent_results.add(report_id)
+                self._recent_order.append(report_id)
                 if len(self._recent_results) > 500:
-                    self._recent_results.clear()
+                    self._recent_results.remove(self._recent_order.popleft())
 
         device_id = payload.get("deviceId", "unknown")
         passed = payload.get("passed", True)
