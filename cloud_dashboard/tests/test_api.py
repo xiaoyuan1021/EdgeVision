@@ -75,3 +75,33 @@ def test_sse_connection_and_cleanup(client, state):
     finally:
         response.close()
     assert state["sse_clients"] == []
+
+
+@pytest.mark.parametrize("path", ["/api/results", "/api/results/recent"])
+def test_zero_limit_is_empty(client, state, path):
+    state["results_deque"].append({"reportId": "one"})
+    assert client.get(path + "?limit=0").json == []
+
+
+@pytest.mark.parametrize("query", ["limit=-1", "limit=invalid"])
+@pytest.mark.parametrize("path", ["/api/results", "/api/results/recent"])
+def test_invalid_limit(client, path, query):
+    assert client.get(path + "?" + query).status_code == 400
+
+
+@pytest.mark.parametrize("query", ["page=0", "page=-1", "page_size=0", "page_size=-1",
+                                  "days=-1", "page=bad", "passed=bad"])
+def test_invalid_history_parameters(client, api, monkeypatch, query):
+    query_db = Mock()
+    monkeypatch.setattr(api, "db_query_history", query_db)
+    assert client.get("/api/results/history?" + query).status_code == 400
+    query_db.assert_not_called()
+
+
+@pytest.mark.parametrize("body", [None, [], 42, {"cmd": []}, {"cmd": {}}])
+def test_command_requires_object_and_string(client, state, body):
+    mqtt = Mock()
+    state.update(mqtt_connected=True, mqtt_client=mqtt)
+    response = client.post("/api/command", data=json.dumps(body), content_type="application/json")
+    assert response.status_code == 400
+    mqtt.publish.assert_not_called()

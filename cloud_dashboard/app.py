@@ -27,6 +27,7 @@ from datetime import datetime
 
 import paho.mqtt.client as mqtt
 from flask import Flask, jsonify, render_template, request, Response, stream_with_context
+from werkzeug.exceptions import BadRequest
 
 from config import MQTT_CONFIG, MAX_RESULTS
 from db import (
@@ -61,6 +62,19 @@ handler = MQTTHandler(app_state)
 
 def now_ts():
     return int(time.time() * 1000)
+
+
+def query_integer(name, default, minimum):
+    raw = request.args.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise BadRequest(f"{name} must be an integer")
+    if value < minimum:
+        raise BadRequest(f"{name} must be at least {minimum}")
+    return value
 
 
 def get_lan_ip():
@@ -165,14 +179,13 @@ def api_devices():
 
 @app.route("/api/results")
 def api_results():
-    limit = request.args.get("limit", 50, type=int)
-    return jsonify(list(app_state["results_deque"])[-limit:])
+    limit = query_integer("limit", 50, 0)
+    return jsonify(list(app_state["results_deque"])[-limit:] if limit else [])
 
 
 @app.route("/api/results/recent")
 def api_results_recent():
-    limit = request.args.get("limit", 50, type=int)
-    return jsonify(list(app_state["results_deque"])[-limit:])
+    return api_results()
 
 
 @app.route("/api/stats/by-roi")
@@ -195,11 +208,13 @@ def api_results_history():
     device_id = request.args.get("device")
     roi_name = request.args.get("roi")
     passed_str = request.args.get("passed")
-    days = request.args.get("days", None, type=int)
-    page = request.args.get("page", 1, type=int)
-    page_size = min(request.args.get("page_size", 50, type=int), 200)
+    days = query_integer("days", None, 0)
+    page = query_integer("page", 1, 1)
+    page_size = min(query_integer("page_size", 50, 1), 200)
     passed = None
     if passed_str is not None:
+        if passed_str.lower() not in ("1", "true", "pass", "0", "false", "fail"):
+            raise BadRequest("passed must be true or false")
         passed = passed_str.lower() in ("1", "true", "pass")
     return jsonify(db_query_history(device_id, roi_name, passed, days, page, page_size))
 
@@ -254,9 +269,11 @@ def api_send_command():
     if not app_state.get("mqtt_client") or not app_state["mqtt_connected"]:
         return jsonify({"error": "MQTT 未连接"}), 503
     body = request.get_json(force=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Expected a JSON object"}), 400
     cmd = body.get("cmd", "")
     allowed = {"capture", "start_detection", "stop_detection", "ping"}
-    if cmd not in allowed:
+    if not isinstance(cmd, str) or cmd not in allowed:
         return jsonify({"error": f"无效指令: {cmd}，允许: {allowed}"}), 400
     payload = json.dumps({"cmd": cmd, "ts": now_ts()})
     app_state["mqtt_client"].publish(MQTT_CONFIG["topics"]["commands"], payload, qos=1)

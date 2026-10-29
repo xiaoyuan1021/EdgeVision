@@ -61,5 +61,3 @@ def api(monkeypatch, state):
 @pytest.fixture
 def client(api):
     return api.app.test_client()
-
-
