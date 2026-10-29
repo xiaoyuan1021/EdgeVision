@@ -14,4 +14,8 @@ The production dashboard database is not opened by these tests.
 Current coverage: database initialization, device upserts, result ordering,
 filtering, pagination, aggregates, heartbeat persistence, MQTT connection
 callbacks, message dispatch, duplicate reports, result counters, and SSE queues.
-HTTP routes, timeout transitions and malformed message schemas still need tests.
+HTTP tests cover status, statistics, recent results, history parameter mapping,
+remote command validation/publishing and SSE disconnect cleanup. HTTP tests
+mock external effects and do not start a server or connect to a broker.
+Remaining coverage includes administrative routes, timeout transitions and
+malformed message schemas.
