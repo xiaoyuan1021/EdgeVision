@@ -7,6 +7,7 @@
 #include "widgets/barcode_tab_widget.h"
 #include "widgets/line_tab_widget.h"
 #include "widgets/object_detection_tab_widget.h"
+#include "widgets/ocr_tab_widget.h"
 
 #include <QMessageBox>
 #include <QComboBox>
@@ -103,6 +104,7 @@ void DetectionUiController::onAddDetectionClicked(const QString& roiId)
             roi->addDetectionItem(item);
             
             emit detectionChanged();
+            emit detectionAdded(roiId, item.itemId);
             
             spdlog::info("已为ROI {} 添加检测项: {}", roi->roiName.toStdString(), typeName.toStdString());
         }
@@ -145,6 +147,8 @@ void DetectionUiController::onDetectionItemSelected(const QString& roiId, const 
 
         // 根据检测类型启用对应的Pipeline步骤
         pipelineManager->updateConfig([&](PipelineConfig& pipelineConfig) {
+            pipelineConfig.objectDetectionApplyEnabled = false;
+            if (detection.type == DetectionType::Custom) return;
             // 先禁用所有步骤
             for (int i = 0; i < PipelineConfig::STEP_COUNT; ++i) {
                 pipelineConfig.stepEnabled[i] = false;
@@ -189,6 +193,10 @@ void DetectionUiController::onDetectionItemSelected(const QString& roiId, const 
         if (detection.type == DetectionType::Blob) {
             BlobAnalysisConfig blobConfig;
             blobConfig.fromJson(detection.config);
+            pipelineManager->updateConfig([&](PipelineConfig& cfg) {
+                cfg.judge.minRegionCount = blobConfig.minBlobCount;
+                cfg.judge.maxRegionCount = blobConfig.maxBlobCount;
+            });
             if (auto* judgeTab = tabManager->getTabAs<JudgeTabWidget>("判定")) {
                 judgeTab->setJudgeConfig(
                     blobConfig.minBlobCount,
@@ -206,7 +214,7 @@ void DetectionUiController::onDetectionItemSelected(const QString& roiId, const 
                 pipelineConfig.barcode = barcodeCfg;
                 pipelineConfig.enhance = barcodeCfg.enhance;
             });
-            if (auto* barcodeTab = tabManager->getTabAs<BarcodeTabWidget>("条码识别")) {
+            if (auto* barcodeTab = tabManager->getTabAs<BarcodeTabWidget>("条码")) {
                 barcodeTab->setBarcodeConfig(barcodeCfg);
             }
         }
@@ -218,7 +226,7 @@ void DetectionUiController::onDetectionItemSelected(const QString& roiId, const 
                 pipelineConfig.lineDetect = lineCfg;
                 pipelineConfig.enhance = lineCfg.enhance;
             });
-            if (auto* lineTab = tabManager->getTabAs<LineDetectTabWidget>("直线检测")) {
+            if (auto* lineTab = tabManager->getTabAs<LineDetectTabWidget>("直线")) {
                 lineTab->setLineConfig(lineCfg);
             }
         }
@@ -230,17 +238,28 @@ void DetectionUiController::onDetectionItemSelected(const QString& roiId, const 
                 pipelineConfig.ocr = ocrCfg.ocr;
                 pipelineConfig.enhance = ocrCfg.enhance;
             });
+            if (auto* ocrTab = tabManager->getTabAs<OcrTabWidget>("文字识别")) {
+                ocrTab->setJudgmentConfig(ocrCfg.expectedText, ocrCfg.matchExact);
+            }
         }
 
         // [NOTE] 目标检测：从DetectionItem.config恢复配置到Tab UI
         if (detection.type == DetectionType::ObjectDetection) {
             ObjectDetectionConfig objCfg;
             objCfg.fromJson(detection.config);
+            pipelineManager->updateConfig([&](PipelineConfig& cfg) { cfg.objectDetection = objCfg; });
             if (auto* objTab = tabManager->getTabAs<ObjectDetectionTabWidget>("目标检测")) {
                 objTab->setDetectionConfig(objCfg);
             }
         }
 
+        // Render the complete selected item only after its snapshot is ready.
+        const auto selectedConfig = pipelineManager->getConfigSnapshot();
+        roi->pipelineConfig = selectedConfig;
+        for (auto* widget : tabManager->allTabs()) {
+            if (auto* configurable = dynamic_cast<IConfigurableTab*>(widget))
+                configurable->loadFromConfig(selectedConfig);
+        }
         break;
     }
 }
@@ -326,6 +345,8 @@ void DetectionUiController::setupConnections(
     std::function<void()> triggerPipeline)
 {
     m_triggerPipeline = triggerPipeline;
+    connect(this, &DetectionUiController::detectionAdded,
+            roiController, &RoiUiController::activateDetectionItem);
 
     // 检测项变更时刷新ROI树形视图
     connect(this, &DetectionUiController::detectionChanged,

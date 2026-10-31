@@ -1,4 +1,5 @@
 #include "algorithm/ort_inference.h"
+#include "algorithm/letterbox_geometry.h"
 #include <QFileInfo>
 #include <QFile>
 #include <QDir>
@@ -6,6 +7,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <spdlog/spdlog.h>
+#include <stdexcept>
 #include <algorithm>
 #include <numeric>
 
@@ -225,7 +227,7 @@ std::vector<DetectionResult> OrtInference::detect(const cv::Mat& input,
         if (inputNamesCStr.empty() || outputNamesCStr.empty())
         {
             spdlog::error("OrtInference: failed to get input/output names");
-            return results;
+            throw std::runtime_error("Invalid ONNX detection output");
         }
 
         // 构造输入 tensor shape: [1, 3, H, W]
@@ -251,30 +253,21 @@ std::vector<DetectionResult> OrtInference::detect(const cv::Mat& input,
         if (outputTensors.empty() || !outputTensors[0].IsTensor())
         {
             spdlog::error("OrtInference: output tensor is empty");
-            return results;
+            throw std::runtime_error("Invalid ONNX detection output");
         }
 
         // 获取输出数据
         const float* outputData = outputTensors[0].GetTensorData<float>();
         auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
 
+        if (outputShape.size() != 3 || outputShape[0] != 1 || outputShape[1] < 5 || outputShape[2] < 0)
+            throw std::runtime_error("Expected YOLO output [1, 4+classes, detections]");
+
         // YOLOv8 输出: [1, 4+numClasses, numDetections]
         int numAttributes = static_cast<int>(outputShape[1]);
         int numDetections = static_cast<int>(outputShape[2]);
         spdlog::info("OrtInference: output shape = [{}, {}, {}], inputWidth={}, inputHeight={}",
                       outputShape[0], outputShape[1], outputShape[2], inputWidth, inputHeight);
-
-        float xScale = static_cast<float>(imgWidth) / inputWidth;
-        float yScale = static_cast<float>(imgHeight) / inputHeight;
-
-        // === 诊断：打印输出数据的原始值 ===
-        // 打印前10个值，检查数据是否正常
-        spdlog::info("OrtInference: first 10 output values:");
-        for (int k = 0; k < 10; ++k)
-        {
-            spdlog::info("  outputData[{}] = {:.6f}", k, outputData[k]);
-        }
-        // === 诊断结束 ===
 
         // 解析每个检测结果
         for (int i = 0; i < numDetections; ++i)
@@ -303,19 +296,12 @@ std::vector<DetectionResult> OrtInference::detect(const cv::Mat& input,
             float w  = outputData[2 * numDetections + i];
             float h  = outputData[3 * numDetections + i];
 
-            int left   = static_cast<int>((cx - w / 2.0f) * xScale);
-            int top    = static_cast<int>((cy - h / 2.0f) * yScale);
-            int width  = static_cast<int>(w * xScale);
-            int height = static_cast<int>(h * yScale);
-
-            // 边界裁剪
-            left   = std::max(0, left);
-            top    = std::max(0, top);
-            width  = std::min(width, imgWidth - left);
-            height = std::min(height, imgHeight - top);
+            const cv::Rect box = restoreLetterboxBox(
+                cx, cy, w, h, r, padLeft, padTop, imgWidth, imgHeight);
+            if (box.empty()) continue;
 
             DetectionResult det;
-            det.box = cv::Rect(left, top, width, height);
+            det.box = box;
             det.confidence = maxConf;
             det.classId = bestClassId;
             if (bestClassId >= 0 && bestClassId < static_cast<int>(classNames_.size()))
@@ -366,10 +352,12 @@ std::vector<DetectionResult> OrtInference::detect(const cv::Mat& input,
     catch (const Ort::Exception& e)
     {
         spdlog::error("OrtInference: detect ORT exception - {}", e.what());
+        throw;
     }
     catch (const std::exception& e)
     {
         spdlog::error("OrtInference: detect exception - {}", e.what());
+        throw;
     }
 
     return results;

@@ -232,7 +232,11 @@ cd bin
 .\EdgeVision.exe
 ```
 
+桌面快捷命令（仓库根目录）：`build-msvc.cmd`、`test-msvc.cmd`、`test-ui-msvc.cmd`。脚本自动定位 MSVC，默认 Qt 路径可通过 `EDGEVISION_QT_DIR` 覆盖；主程序输出到 `build/msvc-buildtools-debug-v2/bin/EdgeVision.exe`。界面信号接线规则见 [UI 交互约定](docs/ui-interactions.md)。
+
 ### 云平台启动
+
+`import app` 不连接数据库或启动后台线程。`create_app()` 初始化一个应用实例，运行时通过 `app.extensions["dashboard"]` 获取；嵌入其他服务器时需显式调用 `runtime.start()` / `runtime.stop()`。直接执行 `python app.py` 已包含该生命周期。`DASHBOARD_DB_PATH` 可覆盖数据库位置，Docker 持久化到 `/app/data/dashboard.db`。
 
 ```bash
 # 方式一：直接运行
@@ -297,7 +301,11 @@ EdgeVision/
 │   └── res.qrc                  # Qt 资源文件
 │
 ├── cloud_dashboard/             # 云平台看板 (Python Flask)
-│   ├── app.py                   # Flask 入口 + REST API + SSE + 调试接口
+│   ├── app.py                   # create_app 工厂和显式启动入口
+│   ├── runtime.py               # 实例状态、缓存恢复、MQTT 启停
+│   ├── state.py                 # 独立状态及锁
+│   ├── routes.py                # REST API + SSE
+│   ├── admin_routes.py          # 管理接口（存储事务成功后更新缓存）
 │   ├── db.py                    # SQLite 持久化层（WAL 模式）
 │   ├── mqtt_handler.py          # MQTT 回调与设备/结果处理
 │   ├── config.py                # 云端配置（MQTT Broker、数据库路径）
@@ -321,7 +329,7 @@ EdgeVision/
 
 ## 🔄 处理管线 (Pipeline)
 
-Pipeline 是 EdgeVision 的核心引擎，采用**可配置步骤链模式**，每个步骤实现 `IPipelineStep` 接口，由 `PipelineManager` 统一编排执行。
+Pipeline 是 EdgeVision 的核心引擎，采用**可配置步骤链模式**，每个步骤实现 `IPipelineStep` 接口，由 `PipelineExecutor` 在工作线程按任务快照执行。
 
 ### 步骤链流程
 
@@ -395,8 +403,8 @@ Pipeline 是 EdgeVision 的核心引擎，采用**可配置步骤链模式**，�
 
 `PipelineScheduler` 统一管理所有 Pipeline 执行请求：
 
-- **消抖合并**：短时间内多个请求只执行最后一个（默认 100ms 窗口）
-- **去重过滤**：相同配置的请求不重复执行
+- **预览合并**：同一来源的预览仅保留最新待处理任务，连续提交不会推迟执行窗口
+- **可靠队列**：可靠任务保留，满队列时显式拒绝；取消任务有通知
 - **优先级队列**：高优先级请求（如用户手动触发）优先执行
 - **异步执行**：基于 `QThreadPool` + `QFutureWatcher`，不阻塞 UI
 
@@ -405,7 +413,7 @@ Pipeline 是 EdgeVision 的核心引擎，采用**可配置步骤链模式**，�
 - `PipelineManager::execute()` 使用局部 `PipelineContext`，不共享可变状态
 - `m_config` 仅在 UI 线程读写，无需加锁
 - `m_lastContext` 由 `m_contextMutex` 互斥锁保护
-- `m_pipelineRunning` 原子标志 + `m_hasPendingReset` 延迟重置标志
+- 算法和模型由每个工作线程独立持有；结果携带图片、ROI、显示代次及配置快照，过期结果不进入界面
 - **配置快照**：`getConfigSnapshot()` 返回值拷贝，避免并发修改
 
 ### 检测结果体系
@@ -506,7 +514,7 @@ EdgeVision 使用 **MQTT 5.0** 协议实现边云通信：
 1. 在 `include/core/pipeline_steps.h` 中实现 `IPipelineStep` 子类
 2. 在 `src/core/pipeline_steps.cpp` 中实现 `run()` 方法
 3. 在 `include/config/pipeline_config.h` 的 `StepType` 枚举中添加新类型
-4. 在 `PipelineManager::initPipeline()` 中注册步骤
+4. 在 `src/core/pipeline_executor.cpp` 的 `WorkerPipeline` 构造函数 中注册步骤
 5. 在 `StepConfigWidget::kSteps[]` 中添加 UI 步骤条目
 
 ### 新增检测类型

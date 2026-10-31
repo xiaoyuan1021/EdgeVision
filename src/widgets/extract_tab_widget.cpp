@@ -1,4 +1,4 @@
-﻿#include "extract_tab_widget.h"
+#include "extract_tab_widget.h"
 #include "ui_extract_tab.h"
 #include "algorithm/opencv_algorithm.h"
 #include "logger.h"
@@ -423,15 +423,15 @@ void ExtractTabWidget::getExtractConfig(ShapeFilterConfig& config) const
 void ExtractTabWidget::setExtractConfig(const ShapeFilterConfig& config)
 {
     if (!m_ui || !m_pipeline) return;
+    const QSignalBlocker modeBlocker(m_ui->comboBox_condition);
+    const QSignalBlocker listBlocker(m_ui->listWidget_select);
 
     // 清空当前条件
     m_filterConditions.clear();
 
     // 应用新配置
     m_filterConditions = config.conditions;
-    m_pipeline->updateConfig([&](PipelineConfig& cfg) {
-        cfg.shapeFilter = config;
-    });
+    m_currentSelectedIndex = -1;
 
     // 更新UI显示
     updateFilterListWidget();
@@ -479,6 +479,7 @@ void ExtractTabWidget::connectSignals(const SignalContext& ctx,
                                       std::function<void()> onExecutePipeline,
                                       std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(ctx); Q_UNUSED(onConfigSaved);
     connect(this, &ExtractTabWidget::extractionChanged,
             this, [onExecutePipeline]() { onExecutePipeline(); });

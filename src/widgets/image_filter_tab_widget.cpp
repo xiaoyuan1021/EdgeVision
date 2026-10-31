@@ -343,7 +343,6 @@ void ImageFilterTabWidget::syncConfigToPipeline()
         cfg.imageFilter.morphologyIterations = m_morphIterSlider->value();
     });
 
-    emit filterConfigChanged();
 }
 
 void ImageFilterTabWidget::onMorphOpChanged(int index)
@@ -407,6 +406,7 @@ void ImageFilterTabWidget::connectSignals(const SignalContext& ctx,
                                           std::function<void()> onExecutePipeline,
                                           std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onConfigSaved);
 
     connect(this, &ImageFilterTabWidget::processRequested, this, [onExecutePipeline]() {

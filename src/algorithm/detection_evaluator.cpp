@@ -1,14 +1,13 @@
 ﻿#include "algorithm/detection_evaluator.h"
 #include "config/detection_config_types.h"
-#include "widgets/object_detection_tab_widget.h"
-#include "widgets/tab_manager.h"
 #include "logger.h"
+#include <stdexcept>
 
 DetectionItemResult DetectionEvaluator::evaluateItem(
     const DetectionItem& detItem,
     const PipelineContext& ctx,
     const cv::Mat& roiImage,
-    void* tabMgr)
+    const Detect& detect)
 {
     if (!detItem.enabled) {
         return DetectionItemResult(detItem.itemId, detItem.itemName, detectionTypeToString(detItem.type));
@@ -26,7 +25,7 @@ DetectionItemResult DetectionEvaluator::evaluateItem(
             result = evaluateLine(detItem, ctx);
             break;
         case DetectionType::ObjectDetection:
-            result = evaluateObjectDetection(detItem, roiImage, tabMgr);
+            result = evaluateObjectDetection(detItem, roiImage, detect);
             break;
         case DetectionType::Ocr:
             result = evaluateOcr(detItem, ctx);
@@ -47,7 +46,7 @@ RoiDetectionResult DetectionEvaluator::evaluateRoi(
     const RoiConfig& roiConfig,
     const PipelineContext& ctx,
     const cv::Mat& roiImage,
-    void* tabMgr)
+    const Detect& detect)
 {
     RoiDetectionResult roiResult(roiConfig.roiId, roiConfig.roiName, QString());
 
@@ -73,7 +72,7 @@ RoiDetectionResult DetectionEvaluator::evaluateRoi(
 
     // 评估每个检测项
     for (const DetectionItem& detItem : roiConfig.detectionItems) {
-        DetectionItemResult itemResult = evaluateItem(detItem, ctx, roiImage, tabMgr);
+        DetectionItemResult itemResult = evaluateItem(detItem, ctx, roiImage, detect);
         roiResult.addItemResult(itemResult);
     }
 
@@ -143,18 +142,20 @@ DetectionItemResult DetectionEvaluator::evaluateLine(
 DetectionItemResult DetectionEvaluator::evaluateObjectDetection(
     const DetectionItem& detItem,
     const cv::Mat& roiImage,
-    void* tabMgr)
+    const Detect& detect)
 {
     DetectionItemResult result;
     ObjectDetectionConfig objConfig;
     objConfig.fromJson(detItem.config);
 
     int detectedCount = 0;
-    auto* mgr = static_cast<TabManager*>(tabMgr);
-    auto* objTab = mgr ? mgr->getTabAs<ObjectDetectionTabWidget>("目标检测") : nullptr;
-    if (objTab && objTab->isModelLoaded()) {
-        std::vector<DetectionResult> detResults = objTab->runDetection(roiImage);
-        detectedCount = static_cast<int>(detResults.size());
+    try {
+        if (!detect) throw std::runtime_error("No object detection service configured");
+        detectedCount = static_cast<int>(detect(roiImage, objConfig).size());
+    } catch (const std::exception& ex) {
+        result.passed = false;
+        result.failReason = QString("目标检测失败: %1").arg(ex.what());
+        return result;
     }
 
     int expectedCount = objConfig.expectedCount;

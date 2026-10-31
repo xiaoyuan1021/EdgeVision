@@ -1,7 +1,5 @@
-﻿#include "widgets/barcode_tab_widget.h"
+#include "widgets/barcode_tab_widget.h"
 #include "ui_barcode_tab.h"
-#include "config/config_manager.h"
-#include "controllers/roi_ui_controller.h"
 #include <QSignalBlocker>
 
 BarcodeTabWidget::BarcodeTabWidget(IPipelineAccess* pipelineAccess,
@@ -38,67 +36,35 @@ BarcodeTabWidget::~BarcodeTabWidget()
 
 void BarcodeTabWidget::setBarcodeConfig(const BarcodeConfig& config)
 {
-    // 阻止信号，避免不完整的中间状态写入 PipelineManager
+    m_draft = config;
     QSignalBlocker blocker1(m_ui->chk_enableBarcode);
     QSignalBlocker blocker2(m_ui->comboBox_codeType);
     QSignalBlocker blocker3(m_ui->spinBox_maxNum);
-
     m_ui->chk_enableBarcode->setChecked(config.enableBarcode);
-
-    if (!config.codeTypes.isEmpty()) {
-        QString codeType = config.codeTypes.first();
-        if (codeType == "auto") {
-            m_ui->comboBox_codeType->setCurrentIndex(0);
-        } else {
-            int idx = m_ui->comboBox_codeType->findText(codeType);
-            if (idx >= 0) {
-                m_ui->comboBox_codeType->setCurrentIndex(idx);
-            }
-        }
+    while (m_ui->comboBox_codeType->count() > 4) m_ui->comboBox_codeType->removeItem(4);
+    int index = config.codeTypes == QStringList{"auto"} || config.codeTypes.isEmpty()
+        ? 0 : m_ui->comboBox_codeType->findText(config.codeTypes.join(", "));
+    if (index < 0) {
+        m_ui->comboBox_codeType->addItem(config.codeTypes.join(", "), config.codeTypes);
+        index = m_ui->comboBox_codeType->count() - 1;
     }
-
-    
+    m_ui->comboBox_codeType->setCurrentIndex(index);
     m_ui->spinBox_maxNum->setValue(config.maxNumSymbols);
-
-    // 手动更新 groupBox 和 Pipeline（使用完整的新配置）
     m_ui->groupBox_settings->setEnabled(config.enableBarcode);
-    updatePipelineConfig();
 }
 
 BarcodeConfig BarcodeTabWidget::getBarcodeConfig() const
 {
-    BarcodeConfig config;
-    config.enableBarcode = m_ui->chk_enableBarcode->isChecked();
-    
-    // 获取条码类型
-    QString codeType = m_ui->comboBox_codeType->currentText();
-    if (codeType == "自动检测")
-    {
-        config.codeTypes = QStringList() << "auto";
-    }
-    else
-    {
-        config.codeTypes = QStringList() << codeType;
-    }
-    
-    config.maxNumSymbols = m_ui->spinBox_maxNum->value();
-    
-    return config;
+    return m_draft;
 }
 
-void BarcodeTabWidget::updatePipelineConfig()
+void BarcodeTabWidget::applyConfig()
 {
     if (!m_pipeline) return;
-    
-    PipelineConfig config = m_pipeline->getConfigSnapshot();
-    config.barcode = getBarcodeConfig();
-    m_pipeline->setConfig(config);
-
+    const auto draft = m_draft;
+    m_pipeline->updateConfig([draft](PipelineConfig& config) { config.barcode = draft; });
     emit barcodeConfigChanged();
-    
-    // 如果禁用了条码识别，清空结果
-    if (!config.barcode.enableBarcode)
-    {
+    if (!draft.enableBarcode) {
         m_ui->tableWidget_results->setRowCount(0);
         m_ui->label_status->setText("状态：未识别");
     }
@@ -158,56 +124,44 @@ void BarcodeTabWidget::updateStatus(const QString& status)
 void BarcodeTabWidget::onEnableBarcodeChanged(bool enabled)
 {
     m_ui->groupBox_settings->setEnabled(enabled);
-    // 只更新本地配置，不执行pipeline，等待用户点击"应用"按钮
+    m_draft.enableBarcode = enabled;
+    emit draftEdited(m_draft);
 }
 
 void BarcodeTabWidget::onCodeTypeChanged(int index)
 {
-    Q_UNUSED(index);
-    // 只更新本地配置，不执行pipeline
+    if (index == 0) m_draft.codeTypes = {"auto"};
+    else if (index >= 4) m_draft.codeTypes = m_ui->comboBox_codeType->itemData(index).toStringList();
+    else m_draft.codeTypes = {m_ui->comboBox_codeType->currentText()};
+    emit draftEdited(m_draft);
 }
 
 void BarcodeTabWidget::onMaxNumChanged(int value)
 {
-    Q_UNUSED(value);
-    // 只更新本地配置，不执行pipeline
-}
-
-void BarcodeTabWidget::onReturnQualityChanged(bool checked)
-{
-    Q_UNUSED(checked);
-    // 只更新本地配置，不执行pipeline
+    m_draft.maxNumSymbols = value;
+    emit draftEdited(m_draft);
 }
 
 void BarcodeTabWidget::handleApply()
 {
-    // 用户点击"应用"按钮时才更新配置并执行pipeline
-    updatePipelineConfig();
+    applyConfig();
     emit requestApplyBarcodeSettings();
 }
 
 void BarcodeTabWidget::connectSignals(const SignalContext& ctx,
-                                       std::function<void()> onExecutePipeline,
-                                       std::function<void()> onConfigSaved)
+                                      std::function<void()> onExecutePipeline,
+                                      std::function<void()> onConfigSaved)
 {
-    Q_UNUSED(onConfigSaved);
-
-    // [NOTE] 条码配置变化时同步到DetectionItem.config
-    auto syncToDetectionItem = [this, ctx]() {
-        if (ctx.roiCtrl) {
-            ctx.roiCtrl->updateBarcodeDetectionConfig(getBarcodeConfig());
-        }
-    };
-
-    connect(m_ui->chk_enableBarcode, &QCheckBox::toggled, this, syncToDetectionItem);
-    connect(m_ui->comboBox_codeType, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, syncToDetectionItem](int) { syncToDetectionItem(); });
-    connect(m_ui->spinBox_maxNum, QOverload<int>::of(&QSpinBox::valueChanged),
-            this, [this, syncToDetectionItem](int) { syncToDetectionItem(); });
-
-    // 条码识别需要用户点击"应用"按钮才执行，不使用自动预览
-    connect(this, &BarcodeTabWidget::requestApplyBarcodeSettings,
-            this, onExecutePipeline);
+    if (!beginSignalConnections()) return;
+    connect(this, &BarcodeTabWidget::draftEdited, this, [save = ctx.saveBarcodeDraft](const BarcodeConfig& config) {
+        if (save) save(config);
+    });
+    connect(this, &BarcodeTabWidget::barcodeConfigChanged, this, [onConfigSaved] {
+        if (onConfigSaved) onConfigSaved();
+    });
+    connect(this, &BarcodeTabWidget::requestApplyBarcodeSettings, this, [onExecutePipeline] {
+        if (onExecutePipeline) onExecutePipeline();
+    });
 }
 
 // ========== IConfigurableTab 接口实现 ==========
@@ -226,9 +180,6 @@ void BarcodeTabWidget::loadFromConfig(const PipelineConfig& config)
 
 void BarcodeTabWidget::initializeTab(const TabInitContext& ctx)
 {
-    if (ctx.pipelineManager) {
-        PipelineConfig pc = ctx.pipelineManager->getConfigSnapshot();
-        setBarcodeConfig(pc.barcode);
-    }
+    Q_UNUSED(ctx);
+    if (m_pipeline) setBarcodeConfig(m_pipeline->getConfigSnapshot().barcode);
 }
-

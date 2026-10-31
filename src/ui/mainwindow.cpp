@@ -1,4 +1,4 @@
-﻿#include "mainwindow.h"
+#include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "logger.h"
 #include "config/constants.h"
@@ -137,7 +137,24 @@ void MainWindow::setupUI()
 
 void MainWindow::setupConnections()
 {
-    // 注意：on_tabWidget_currentChanged 已由 ui->setupUi 内部的 connectSlotsByName 自动连接，无需手动连接
+    connect(ui->tabWidget, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
+    connect(ui->btn_pipelineConfig, &QPushButton::clicked, this, &MainWindow::onPipelineConfigClicked);
+    connect(ui->btn_addROI, &QPushButton::clicked, this, &MainWindow::onAddRoiClicked);
+    connect(ui->btn_deleteROI, &QPushButton::clicked, this, &MainWindow::onDeleteRoiClicked);
+    connect(ui->btn_switchROI, &QPushButton::clicked, this, &MainWindow::onSwitchRoiClicked);
+    connect(ui->btn_Log, &QPushButton::clicked, this, &MainWindow::onLogClicked);
+    connect(ui->btn_Home, &QPushButton::clicked, this, &MainWindow::onHomeClicked);
+    connect(ui->btn_saveConfig, &QPushButton::clicked, this, &MainWindow::onSaveConfigClicked);
+    connect(ui->btn_importConfig, &QPushButton::clicked, this, &MainWindow::onImportConfigClicked);
+    connect(ui->btn_startAutoDetection, &QPushButton::clicked, this, &MainWindow::onStartAutoDetectionClicked);
+    connect(ui->btn_stopAutoDetection, &QPushButton::clicked, this, &MainWindow::onStopAutoDetectionClicked);
+    connect(ui->btn_cloudPlatform, &QPushButton::clicked, this, &MainWindow::onCloudPlatformClicked);
+    connect(ui->btn_saveToProfile, &QPushButton::clicked, this, &MainWindow::onSaveToProfileClicked);
+    connect(ui->btn_loadFromProfile, &QPushButton::clicked, this, &MainWindow::onLoadFromProfileClicked);
+    connect(ui->btn_importFolder, &QPushButton::clicked, this, &MainWindow::onImportFolderClicked);
+
+    connect(&m_roiManager, &RoiManager::inputChanged,
+            m_pipelineManager, &PipelineManager::clearLastResult);
 
     // FileManager信号
     connect(m_fileManager, &FileManager::imageLoaded, this, [this](const cv::Mat& img, const QString& filePath) {
@@ -280,8 +297,7 @@ void MainWindow::setupControllers()
     m_roiUiController->setDetectionConfigController(m_roiDetectionConfigController);
     m_detectionUiController = new DetectionUiController(m_roiManager, ui->tabWidget, this);
     m_configController = new ConfigController(m_pipelineManager, m_roiManager, this);
-    m_autoDetectionController = new AutoDetectionController(m_pipelineManager, &m_roiManager, this);
-    m_autoDetectionController->setTabManager(m_tabManager);
+    m_autoDetectionController = new AutoDetectionController(&m_roiManager, this);
     m_profileController = new ProfileController(m_profileManager, &m_roiManager,
                                                 m_pipelineManager, m_tabManager,
                                                 m_roiUiController, m_toast, this, this);
@@ -341,7 +357,8 @@ void MainWindow::setupControllerConnections()
             auto* connectable = dynamic_cast<ISignalConnectable*>(widget);
             if (connectable) {
                 connectable->connectSignals(
-                    {m_pipelineManager, &m_roiManager, m_view, m_roiUiController},
+                    {m_pipelineManager, &m_roiManager, m_view, m_roiUiController,
+                     [this](const BarcodeConfig& config) { m_roiUiController->updateBarcodeDetectionConfig(config); }},
                     [this]() {
                         m_pipelineMode = PipelineMode::Execute;
                         requestRefresh();
@@ -410,6 +427,10 @@ void MainWindow::setupControllerConnections()
     // 检测项选中跳转
     connect(m_roiUiController, &RoiUiController::detectionItemSelected, this,
         [this](const QString& roiId, const QString& detectionId) {
+            m_pipelineMode = PipelineMode::Config;
+            m_needRefresh = false;
+            m_pipelineManager->clearLastResult();
+            m_tabManager->clearAllResults();
             m_detectionUiController->onDetectionItemSelected(roiId, detectionId, m_tabManager, m_pipelineManager);
 
             // 更新显示模式管理器的Tab状态（switchToTabConfig内部阻塞了信号，
@@ -443,8 +464,6 @@ void MainWindow::setupControllerConnections()
         }
         if (!roiId.isEmpty()) {
             m_detectionUiController->onAddDetectionClicked(roiId);
-            // 添加检测项后自动切换到对应Tab
-            m_roiUiController->autoSelectFirstDetectionItem();
         }
     });
     connect(ui->btn_deleteDetection, &QPushButton::clicked, this, [this]() {
@@ -469,10 +488,9 @@ void MainWindow::setupControllerConnections()
         if (!currentImage.empty()) {
             showImage(currentImage);
         }
-        m_roiUiController->syncRoiConfigsToWidget();
-
         // 加载新图片的Pipeline配置
         applyImagePipelineConfig(newImageId);
+        m_roiUiController->syncRoiConfigsToWidget();
 
         // [FIX] 统一恢复Tab可见性（检测项优先，其次步骤Tab）
         restoreTabVisibility();
@@ -551,7 +569,12 @@ void MainWindow::processAndDisplay()
 
     // 使用调度器异步执行
     PipelineConfig configSnapshot = m_pipelineManager->getConfigSnapshot();
-    m_pipelineManager->scheduler()->submit(currentImage, configSnapshot, 0, "MainWindow::processAndDisplay");
+    PipelineIdentity identity{m_roiManager.getCurrentImageId(), m_roiManager.getActiveRoiId(),
+                              m_pipelineManager->displayGeneration()};
+    PipelineRequest request(currentImage, configSnapshot, 0, "MainWindow::processAndDisplay", identity);
+    const qint64 id = m_pipelineManager->scheduler()->submit(
+        std::move(request), PipelineScheduler::Policy::LatestPreview);
+    m_pipelineManager->expectRequest(id);
 }
 
 void MainWindow::showImage(const cv::Mat &img)
@@ -568,7 +591,7 @@ void MainWindow::showImage(const cv::Mat &img)
 
 // ========== 文件操作 ==========
 
-void MainWindow::on_btn_pipelineConfig_clicked()
+void MainWindow::onPipelineConfigClicked()
 {
     spdlog::info("[MainWindow] 用户点击自定义Pipeline按钮");
 
@@ -603,20 +626,20 @@ void MainWindow::on_btn_pipelineConfig_clicked()
 
 
 
-void MainWindow::on_btn_cloudPlatform_clicked()
+void MainWindow::onCloudPlatformClicked()
 {
     m_cloudDashboardManager->launch();
 }
 
 // ========== ROI操作 ==========
 
-void MainWindow::on_btn_addROI_clicked()      { m_roiUiController->onAddRoiClicked(); }
-void MainWindow::on_btn_deleteROI_clicked()   { m_roiUiController->onDeleteRoiClicked(); }
-void MainWindow::on_btn_switchROI_clicked()   { m_roiUiController->onSwitchRoiClicked(); }
+void MainWindow::onAddRoiClicked()      { m_roiUiController->onAddRoiClicked(); }
+void MainWindow::onDeleteRoiClicked()   { m_roiUiController->onDeleteRoiClicked(); }
+void MainWindow::onSwitchRoiClicked()   { m_roiUiController->onSwitchRoiClicked(); }
 
 // ========== Tab切换 ==========
 
-void MainWindow::on_tabWidget_currentChanged(int index)
+void MainWindow::onTabChanged(int index)
 {
     if (m_isDestroying) return;
     if (m_roiManager.getFullImage().empty()) return;
@@ -626,20 +649,20 @@ void MainWindow::on_tabWidget_currentChanged(int index)
 
 // ========== 页面导航 ==========
 
-void MainWindow::on_btn_Log_clicked()
+void MainWindow::onLogClicked()
 {
     animatePageSwitch(0, 1);
 }
 
-void MainWindow::on_btn_Home_clicked()
+void MainWindow::onHomeClicked()
 {
     animatePageSwitch(1, 0);
 }
 
 // ========== 配置管理 ==========
 
-void MainWindow::on_btn_saveConfig_clicked()  { m_configController->saveConfig(this); }
-void MainWindow::on_btn_importConfig_clicked() { m_configController->loadConfig(this); }
+void MainWindow::onSaveConfigClicked()  { m_configController->saveConfig(this); }
+void MainWindow::onImportConfigClicked() { m_configController->loadConfig(this); }
 
 // ========== 自动检测 ==========
 
@@ -649,12 +672,12 @@ void MainWindow::startAutoDetection()
     m_autoDetectionController->startDetection();
 }
 
-void MainWindow::on_btn_startAutoDetection_clicked()
+void MainWindow::onStartAutoDetectionClicked()
 {
     startAutoDetection();
 }
 
-void MainWindow::on_btn_stopAutoDetection_clicked()
+void MainWindow::onStopAutoDetectionClicked()
 {
     m_autoDetectionController->stopDetection();
 }
@@ -754,7 +777,7 @@ void MainWindow::setupMqtt()
     connect(m_mqttManager, &MqttManager::stopDetectionRequested,
             this, [this]() {
         m_toast->showMessage("收到云端指令: 停止批量检测");
-        on_btn_stopAutoDetection_clicked();
+        onStopAutoDetectionClicked();
     });
     connect(m_mqttManager, &MqttManager::pingRequested,
             this, [this]() {
@@ -793,17 +816,17 @@ void MainWindow::applyImagePipelineConfig(const QString& imageId)
 
 // ========== 方案操作 ==========
 
-void MainWindow::on_btn_saveToProfile_clicked()
+void MainWindow::onSaveToProfileClicked()
 {
     m_profileController->saveToProfile();
 }
 
-void MainWindow::on_btn_loadFromProfile_clicked()
+void MainWindow::onLoadFromProfileClicked()
 {
     m_profileController->loadFromProfile();
 }
 
-void MainWindow::on_btn_importFolder_clicked()
+void MainWindow::onImportFolderClicked()
 {
     QString dir = QFileDialog::getExistingDirectory(this, "选择图片文件夹", QString(),
         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
@@ -853,6 +876,7 @@ void MainWindow::restoreTabVisibility()
     if (!currentRois.isEmpty()) {
         if (auto* stepWidget = m_tabManager->getTabAs<StepConfigWidget>("步骤")) {
             stepWidget->loadFromConfig(m_pipelineManager->getConfigSnapshot());
+            stepWidget->applyTabVisibility();
             spdlog::info("[MainWindow] restoreTabVisibility: 已恢复步骤Tab");
             return;
         }

@@ -67,6 +67,7 @@ public:
 signals:
     // 检测项变更信号
     void detectionChanged();
+    void detectionAdded(const QString& roiId, const QString& detectionId);
     
     // 请求创建Tab信号（懒加载）
     void ensureTabNeeded(const QString& tabName);

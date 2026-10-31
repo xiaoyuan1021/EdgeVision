@@ -183,10 +183,19 @@ void OcrTabWidget::loadFromConfig(const PipelineConfig& config)
     // RapidOCR 配置已简化，无需加载 pageMode
 }
 
+void OcrTabWidget::setJudgmentConfig(const QString& expectedText, bool matchExact)
+{
+    const QSignalBlocker textBlocker(m_expectedTextLineEdit);
+    const QSignalBlocker matchBlocker(m_matchExactCheckBox);
+    m_expectedTextLineEdit->setText(expectedText);
+    m_matchExactCheckBox->setChecked(matchExact);
+}
+
 void OcrTabWidget::connectSignals(const SignalContext& ctx,
                                   std::function<void()> onExecutePipeline,
                                   std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onConfigSaved);
 
     // 图片切换时清空上次识别结果，防止旧图结果自动显示在新图Tab中

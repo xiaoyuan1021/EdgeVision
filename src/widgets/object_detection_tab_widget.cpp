@@ -1,6 +1,8 @@
-﻿#include "widgets/object_detection_tab_widget.h"
+#include "widgets/object_detection_tab_widget.h"
 #include "ui_object_detection_tab.h"
 #include "logger.h"
+#include "algorithm/object_detection_service.h"
+#include "core/pipeline.h"
 #include "controllers/roi_ui_controller.h"
 #include <QFileDialog>
 #include <QMessageBox>
@@ -97,170 +99,43 @@ void ObjectDetectionTabWidget::autoLoadDefaultModel()
 
 void ObjectDetectionTabWidget::loadModelAsync()
 {
-    QString modelPath = m_ui->lineEdit_modelPath->text().trimmed();
-    if (modelPath.isEmpty()) return;
-
-    QString configPath = m_ui->lineEdit_configPath->text().trimmed();
-
-    // 如果模型和配置都已加载且路径相同，无需重新加载
-    if (m_dnnInference.isLoaded() && m_currentModelPath == modelPath && m_currentConfigPath == configPath) {
-        spdlog::info("[ObjectDetection] model already loaded, skip reloading");
-        m_ui->label_status->setText("状态：模型已就绪");
-        m_pipeline->updateConfig([this](PipelineConfig& cfg) {
-            cfg.objectDetection.expectedCount = m_ui->spinBox_expectedCount->value();
-        });
-        emit detectionConfigChanged();
-        return;
-    }
-
+    const auto config = getDetectionConfig();
+    const auto generation = ++m_loadGeneration;
     m_ui->label_status->setText("状态：正在加载模型...");
     m_ui->btn_apply->setEnabled(false);
-
-    QFuture<QString> future = QtConcurrent::run(
-        [this, modelPath, configPath]() -> QString {
-            // Step 1: 加载 ONNX Runtime GPU（优先，推理更快）
-            bool ortOk = m_ortInference.loadModel(modelPath, true);
-
-            // Step 2: 加载 OpenCV DNN（回退，标签页静图检测）
-            bool dnnOk = m_dnnInference.loadModel(modelPath, configPath);
-
-            if (ortOk && dnnOk) {
-                spdlog::info("[ObjectDetection] ONNX Runtime GPU + OpenCV DNN loaded");
-                return "both";
-            }
-            if (ortOk) {
-                spdlog::info("[ObjectDetection] ONNX Runtime GPU loaded, OpenCV DNN unavailable");
-                return "ort";
-            }
-            if (dnnOk) {
-                spdlog::warn("[ObjectDetection] OpenCV DNN loaded, ONNX Runtime unavailable");
-                return "dnn";
-            }
-            spdlog::error("[ObjectDetection] all backends failed");
-            return "none";
+    // Only value snapshots cross the worker boundary; closing the tab is safe.
+    auto future = QtConcurrent::run([config]() -> QString {
+        try {
+            auto info = ObjectDetectionService::prepare(config);
+            return "状态：模型已就绪 (" + info.backend + ")";
+        } catch (const std::exception& ex) {
+            return "加载失败: " + QString::fromUtf8(ex.what());
         }
-    );
-
-    // 使用 QFutureWatcher 监听完成信号
-    QFutureWatcher<QString>* watcher = new QFutureWatcher<QString>(this);
-    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, modelPath, configPath]() {
-        QString result = watcher->result();
+    });
+    auto* watcher = new QFutureWatcher<QString>(this);
+    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, generation]() {
+        const QString message = watcher->result();
         watcher->deleteLater();
+        if (generation != m_loadGeneration) return;
         m_ui->btn_apply->setEnabled(true);
-
-        if (result == "both" || result == "ort" || result == "dnn") {
-            m_currentModelPath = modelPath;
-            m_currentConfigPath = configPath;
-
-            // 预热：消除首次推理延迟（优先预热ONNX Runtime GPU）
-            if (m_ortInference.isLoaded()) {
-                int w = m_ortInference.getModelImgWidth();
-                int h = m_ortInference.getModelImgHeight();
-                cv::Mat warmup(h, w, CV_8UC3, cv::Scalar(114, 114, 114));
-                m_ortInference.detect(warmup, 0.5f, 0.4f, w, h);
-                spdlog::info("[ObjectDetection] ONNX Runtime GPU warmup completed ({}x{})", w, h);
-            } else if (m_dnnInference.isLoaded()) {
-                cv::Size inputSize = m_dnnInference.getModelInputSize();
-                cv::Mat warmup(inputSize.height, inputSize.width, CV_8UC3, cv::Scalar(114, 114, 114));
-                m_dnnInference.detect(warmup, 0.5f, 0.4f, inputSize.width, inputSize.height);
-                spdlog::info("[ObjectDetection] OpenCV DNN warmup completed ({}x{})", inputSize.width, inputSize.height);
-            }
-
-            QString msg;
-            if (result == "both") msg = "状态：模型加载成功 (ORT GPU + DNN)";
-            else if (result == "ort") msg = "状态：模型加载成功 (ORT GPU)";
-            else msg = "状态：模型加载成功 (DNN)";
-            
-            emit modelLoadFinished(true, msg);
-            spdlog::debug("[ObjectDetection] {}", msg.toStdString());
-        } else {
-            emit modelLoadFinished(false, "状态：所有推理后端均失败");
-            spdlog::info("[ObjectDetection] all backends failed");
-        }
+        emit modelLoadFinished(!message.startsWith("加载失败"), message);
     });
     watcher->setFuture(future);
 }
 
 void ObjectDetectionTabWidget::onApplyClicked()
 {
-    // 检查模型是否已加载
-    if (!isModelLoaded()) {
-        m_ui->label_status->setText("状态：请先加载模型");
-        spdlog::warn("[ObjectDetection] apply clicked but model not loaded");
-        return;
-    }
-
-    // 同步配置到pipeline并启用检测
-    m_pipeline->updateConfig([this](PipelineConfig& cfg) {
-        cfg.objectDetectionApplyEnabled = true;
-        cfg.objectDetection.expectedCount = m_ui->spinBox_expectedCount->value();
+    const auto config = getDetectionConfig();
+    m_pipeline->updateConfig([config](PipelineConfig& pipeline) {
+        pipeline.objectDetectionApplyEnabled = true;
+        pipeline.objectDetection = config;
     });
-
-    // 触发pipeline执行
-    spdlog::info("[ObjectDetection] apply clicked, enabling detection and triggering pipeline");
     emit detectionConfigChanged();
 }
 
-std::vector<DetectionResult> ObjectDetectionTabWidget::runDetection(const cv::Mat& image)
+void ObjectDetectionTabWidget::updateFromPipeline(const PipelineContext& context)
 {
-    if (image.empty()) return {};
-
-    // 优先使用 ONNX Runtime GPU（推理更快）
-    if (m_ortInference.isLoaded()) {
-        return m_ortInference.detect(image,
-            getConfidenceThreshold(),
-            getNmsThreshold(),
-            m_ortInference.getModelImgWidth(),
-            m_ortInference.getModelImgHeight());
-    }
-
-    // 回退到 OpenCV DNN
-    if (m_dnnInference.isLoaded()) {
-        cv::Size inputSize = m_dnnInference.getModelInputSize();
-        return m_dnnInference.detect(image,
-            getConfidenceThreshold(),
-            getNmsThreshold(),
-            inputSize.width,
-            inputSize.height);
-    }
-
-    return {};
-}
-
-std::vector<DetectionResult> ObjectDetectionTabWidget::runDetectionOrt(const cv::Mat& image)
-{
-    if (image.empty()) return {};
-
-    // 优先使用 ONNX Runtime（视频推理加速）
-    if (m_ortInference.isLoaded()) {
-        return m_ortInference.detect(image,
-            getConfidenceThreshold(),
-            getNmsThreshold(),
-            m_ortInference.getModelImgWidth(),
-            m_ortInference.getModelImgHeight());
-    }
-
-    // 回退到 OpenCV DNN
-    if (m_dnnInference.isLoaded()) {
-        cv::Size inputSize = m_dnnInference.getModelInputSize();
-        return m_dnnInference.detect(image,
-            getConfidenceThreshold(),
-            getNmsThreshold(),
-            inputSize.width,
-            inputSize.height);
-    }
-
-    return {};
-}
-
-bool ObjectDetectionTabWidget::isModelLoaded() const
-{
-    return m_dnnInference.isLoaded() || m_ortInference.isLoaded();
-}
-
-bool ObjectDetectionTabWidget::isOrtLoaded() const
-{
-    return m_ortInference.isLoaded();
+    updateDetectionResults(context.objectDetectionResults);
 }
 
 float ObjectDetectionTabWidget::getConfidenceThreshold() const
@@ -275,7 +150,7 @@ float ObjectDetectionTabWidget::getNmsThreshold() const
 
 ObjectDetectionConfig ObjectDetectionTabWidget::getDetectionConfig() const
 {
-    ObjectDetectionConfig config;
+    ObjectDetectionConfig config = m_renderedConfig;
     config.modelPath = m_ui->lineEdit_modelPath->text();
     config.configPath = m_ui->lineEdit_configPath->text();
     config.confidenceThreshold = getConfidenceThreshold();
@@ -286,6 +161,9 @@ ObjectDetectionConfig ObjectDetectionTabWidget::getDetectionConfig() const
 
 void ObjectDetectionTabWidget::setDetectionConfig(const ObjectDetectionConfig& config)
 {
+    m_renderedConfig = config;
+    ++m_loadGeneration;
+    m_ui->btn_apply->setEnabled(true);
     QSignalBlocker blocker1(m_ui->lineEdit_modelPath);
     QSignalBlocker blocker2(m_ui->lineEdit_configPath);
     QSignalBlocker blocker3(m_ui->slider_confidenceThreshold);
@@ -297,6 +175,8 @@ void ObjectDetectionTabWidget::setDetectionConfig(const ObjectDetectionConfig& c
     m_ui->slider_confidenceThreshold->setValue(static_cast<int>(config.confidenceThreshold * 100));
     m_ui->slider_nmsThreshold->setValue(static_cast<int>(config.nmsThreshold * 100));
     m_ui->spinBox_expectedCount->setValue(config.expectedCount);
+    m_ui->label_confidenceValue->setText(QString::number(config.confidenceThreshold, 'f', 2));
+    m_ui->label_nmsValue->setText(QString::number(config.nmsThreshold, 'f', 2));
 }
 
 void ObjectDetectionTabWidget::updateDetectionResults(const std::vector<DetectionResult>& results)
@@ -338,6 +218,7 @@ void ObjectDetectionTabWidget::connectSignals(const SignalContext& ctx,
                                                std::function<void()> onExecutePipeline,
                                                std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onConfigSaved);
     connect(this, &ObjectDetectionTabWidget::detectionConfigChanged,
             this, [onExecutePipeline]() { onExecutePipeline(); });

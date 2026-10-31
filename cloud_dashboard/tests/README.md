@@ -21,7 +21,7 @@ MQTT boundary tests also cover invalid UTF-8/JSON shapes, malformed result field
 deduplication cache eviction, timeout thresholds and result persistence failures.
 Administrative route integration tests cover ROI add/update/rename/delete,
 device updates, clearing the temporary database, exports, diagnostics, statistics
-reloads and simulated message counts. They patch both database-path references.
+reloads and simulated message counts. Each application receives its own Database and DashboardRuntime.
 
 Collect production-only statement and branch coverage from the repository root:
 
@@ -29,5 +29,6 @@ Collect production-only statement and branch coverage from the repository root:
 python -m pytest cloud_dashboard/tests --cov --cov-config=cloud_dashboard/.coveragerc --cov-report=term-missing
 ```
 
-Coverage is not a completion criterion by itself. Startup behavior, error paths
-and additional schema boundaries still need review.
+Lifecycle tests cover import without IO, isolated app instances, startup/stop/restart,
+failed startup recovery, cache read failures, partial transaction rollback, and
+invalid management input. MQTT networking uses a client factory mock.

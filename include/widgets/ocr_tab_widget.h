@@ -18,6 +18,7 @@ class OcrTabWidget : public QWidget, public ISignalConnectable, public IConfigur
 public:
     explicit OcrTabWidget(IPipelineAccess* pipelineAccess, QWidget* parent = nullptr);
     ~OcrTabWidget();
+    void setJudgmentConfig(const QString& expectedText, bool matchExact);
 
     // IConfigurableTab 接口实现
     void saveToConfig(PipelineConfig& config) const override;

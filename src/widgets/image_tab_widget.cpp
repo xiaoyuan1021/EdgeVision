@@ -9,15 +9,23 @@ ImageTabWidget::ImageTabWidget(IPipelineAccess* pipelineAccess, QWidget* parent)
     , m_pipeline(pipelineAccess)
 {
     m_ui->setupUi(this);
-    // Qt 会自动连接 on_btn_applyChannel_clicked 和 on_comboBox_channels_currentIndexChanged
-    // 因为它们被声明为 private slots，无需手动 connect
+    connect(m_ui->btn_applyChannel, &QPushButton::clicked, this, &ImageTabWidget::onApplyChannelClicked);
 }
 
 ImageTabWidget::~ImageTabWidget()
 {
-    // m_ui 的所有权由 Qt 管理，不需要手动 delete
-    // 只需要将指针置空
-    m_ui = nullptr;
+    delete m_ui;
+}
+
+void ImageTabWidget::saveToConfig(PipelineConfig& config) const
+{
+    config.colorFilter.channel = channelFromIndex(m_ui->comboBox_channels->currentIndex());
+}
+
+void ImageTabWidget::loadFromConfig(const PipelineConfig& config)
+{
+    const QSignalBlocker blocker(m_ui->comboBox_channels);
+    m_ui->comboBox_channels->setCurrentIndex(static_cast<int>(config.colorFilter.channel));
 }
 
 PipelineConfig::Channel ImageTabWidget::channelFromIndex(int index) const
@@ -34,7 +42,7 @@ PipelineConfig::Channel ImageTabWidget::channelFromIndex(int index) const
     }
 }
 
-void ImageTabWidget::on_btn_applyChannel_clicked()
+void ImageTabWidget::onApplyChannelClicked()
 {
     if (!m_ui || !m_pipeline) return;
 
@@ -49,23 +57,15 @@ void ImageTabWidget::on_btn_applyChannel_clicked()
     emit channelChanged(comboIndex);
 }
 
-void ImageTabWidget::on_comboBox_channels_currentIndexChanged(int index)
-{
-    // 仅当下拉框索引改变时记录，但不发送信号
-    // 信号只由按钮点击触发，避免重复
-    
-}
 
 void ImageTabWidget::connectSignals(const SignalContext& ctx,
                                     std::function<void()> onExecutePipeline,
                                     std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     connect(this, &ImageTabWidget::channelChanged,
-            this, [ctx, onExecutePipeline](int channel) {
-                ctx.pipelineManager->updateConfig([channel](PipelineConfig& cfg) {
-                    cfg.colorFilter.channel = static_cast<ChannelMode>(channel);
-                });
-                onExecutePipeline();
+            this, [onExecutePipeline](int) {
+                if (onExecutePipeline) onExecutePipeline();
             });
 }
 

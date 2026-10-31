@@ -71,11 +71,11 @@ signals:
     void openCameraRequested();
 
 private slots:
-    void on_comboSourceType_currentIndexChanged(int index);
-    void on_btnOpenFile_clicked();
-    void on_btnOpenDir_clicked();
-    void on_btnOpenCamera_clicked();
-    void on_comboCamera_currentIndexChanged(int index);
+    void onSourceTypeChanged(int index);
+    void onOpenFileClicked();
+    void onOpenDirectoryClicked();
+    void onOpenCameraClicked();
+    void onCameraIndexChanged(int index);
 
 private:
     void updateUIState();

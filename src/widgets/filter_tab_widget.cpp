@@ -1,9 +1,10 @@
-﻿#include "filter_tab_widget.h"
+#include "filter_tab_widget.h"
 #include "ui_filter_tab.h"
 #include "logger.h"
 #include "config/constants.h"
 #include "config/config_manager.h"
 #include "ui/slider_spinbox_binder.h"
+#include "ui/scoped_widget_signals.h"
 
 FilterTabWidget::FilterTabWidget(IPipelineAccess* pipelineAccess, QWidget* parent)
     : QWidget(parent)
@@ -148,103 +149,23 @@ void FilterTabWidget::setupConnections()
             this, &FilterTabWidget::onFilterModeChanged);
 }
 
-void FilterTabWidget::onSelectTypeChanged(int index)
-{
-    Q_UNUSED(index);
-}
 
-void FilterTabWidget::onConditionChanged(int index)
-{
-    Q_UNUSED(index);
-}
 
 void FilterTabWidget::onFilterModeChanged(int index)
 {
-    m_pipeline->updateConfig([&](PipelineConfig& cfg) {
-        auto& cf = cfg.colorFilter;
-        switch (index) {
-        case 0:  // None
-            cf.mode = ImageFilterMode::None;
-            m_ui->stackedWidget_filter->setCurrentIndex(0);
-            break;
-        case 1:  // Gray
-            cf.mode = ImageFilterMode::Gray;
-            m_ui->stackedWidget_filter->setCurrentIndex(1);
-            syncGrayParameters();
-            break;
-        case 2:  // RGB
-            cf.mode = ImageFilterMode::RGB;
-            m_ui->stackedWidget_filter->setCurrentIndex(2);
-            syncRGBParameters();
-            break;
-        case 3:  // HSV
-            cf.mode = ImageFilterMode::HSV;
-            m_ui->stackedWidget_filter->setCurrentIndex(3);
-            syncHSVParameters();
-            break;
-        default:
-            cf.mode = ImageFilterMode::None;
-            m_ui->stackedWidget_filter->setCurrentIndex(0);
-            break;
-        }
-    });
-
+    m_ui->stackedWidget_filter->setCurrentIndex(index);
+    m_pipeline->updateConfig([this](PipelineConfig& cfg) { saveToConfig(cfg); });
     emit filterConfigChanged();
 }
 
 void FilterTabWidget::filterColorChannelsChanged()
 {
-    // 总是同步所有参数，而不是只同步当前模式
-    // 这样用户可以在任何模式下调整滑条并立即看到效果
-    syncGrayParameters();
-    syncRGBParameters();
-    syncHSVParameters();
-
-    // 直接发出信号，消抖由 PipelineScheduler 统一处理
+    m_pipeline->updateConfig([this](PipelineConfig& cfg) { saveToConfig(cfg); });
     emit filterConfigChanged();
 }
 
-void FilterTabWidget::syncGrayParameters()
-{
-    int grayLow = m_ui->Slider_grayLow->value();
-    int grayHigh = m_ui->Slider_grayHigh->value();
-    m_pipeline->updateConfig([&](PipelineConfig& cfg) {
-        cfg.colorFilter.grayLow = grayLow;
-        cfg.colorFilter.grayHigh = grayHigh;
-    });
-}
 
-void FilterTabWidget::syncRGBParameters()
-{
-    int rLow = m_ui->Slider_rgb_R_Low->value();
-    int rHigh = m_ui->Slider_rgb_R_High->value();
-    int gLow = m_ui->Slider_rgb_G_Low->value();
-    int gHigh = m_ui->Slider_rgb_G_High->value();
-    int bLow = m_ui->Slider_rgb_B_Low->value();
-    int bHigh = m_ui->Slider_rgb_B_High->value();
 
-    m_pipeline->updateConfig([&](PipelineConfig& cfg) {
-        cfg.colorFilter.rLow = rLow; cfg.colorFilter.rHigh = rHigh;
-        cfg.colorFilter.gLow = gLow; cfg.colorFilter.gHigh = gHigh;
-        cfg.colorFilter.bLow = bLow; cfg.colorFilter.bHigh = bHigh;
-    });
-}
-
-void FilterTabWidget::syncHSVParameters()
-{
-    int hLow = m_ui->Slider_hsv_H_Low->value();
-    int hHigh = m_ui->Slider_hsv_H_High->value();
-    int sLow = m_ui->Slider_hsv_S_Low->value();
-    int sHigh = m_ui->Slider_hsv_S_High->value();
-    int vLow = m_ui->Slider_hsv_V_Low->value();
-    int vHigh = m_ui->Slider_hsv_V_High->value();
-
-    m_pipeline->updateConfig([&](PipelineConfig& cfg) {
-        cfg.colorFilter.hLow = hLow; cfg.colorFilter.hHigh = hHigh;
-        cfg.colorFilter.sLow = sLow; cfg.colorFilter.sHigh = sHigh;
-        cfg.colorFilter.vLow = vLow; cfg.colorFilter.vHigh = vHigh;
-    });
-}
 
 void FilterTabWidget::getFilterConfig(int& mode, int& grayLow, int& grayHigh) const
 {
@@ -255,12 +176,14 @@ void FilterTabWidget::getFilterConfig(int& mode, int& grayLow, int& grayHigh) co
 
 void FilterTabWidget::setFilterConfig(int mode, int grayLow, int grayHigh)
 {
+    const QSignalBlocker modeBlocker(m_ui->comboBox_filterMode);
     const QSignalBlocker b1(m_ui->Slider_grayLow);
     const QSignalBlocker b2(m_ui->Slider_grayHigh);
     const QSignalBlocker sb1(m_ui->spinBox_grayLow);
     const QSignalBlocker sb2(m_ui->spinBox_grayHigh);
 
     m_ui->comboBox_filterMode->setCurrentIndex(mode);
+    m_ui->stackedWidget_filter->setCurrentIndex(mode);
     m_ui->Slider_grayLow->setValue(grayLow);
     m_ui->Slider_grayHigh->setValue(grayHigh);
     m_ui->spinBox_grayLow->setValue(grayLow);
@@ -271,6 +194,7 @@ void FilterTabWidget::connectSignals(const SignalContext& ctx,
                                      std::function<void()> onExecutePipeline,
                                      std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(ctx); Q_UNUSED(onConfigSaved);
     connect(this, &FilterTabWidget::filterConfigChanged,
             this, [onExecutePipeline]() { onExecutePipeline(); });
@@ -280,19 +204,56 @@ void FilterTabWidget::connectSignals(const SignalContext& ctx,
 
 void FilterTabWidget::saveToConfig(PipelineConfig& config) const
 {
-    int mode, grayLow, grayHigh;
-    getFilterConfig(mode, grayLow, grayHigh);
-    config.colorFilter.mode = static_cast<ImageFilterMode>(mode);
-    config.colorFilter.grayLow = grayLow;
-    config.colorFilter.grayHigh = grayHigh;
+    auto& cf = config.colorFilter;
+    cf.mode = static_cast<ImageFilterMode>(m_ui->comboBox_filterMode->currentIndex());
+    cf.grayLow = m_ui->Slider_grayLow->value();
+    cf.grayHigh = m_ui->Slider_grayHigh->value();
+    cf.rLow = m_ui->Slider_rgb_R_Low->value();
+    cf.rHigh = m_ui->Slider_rgb_R_High->value();
+    cf.gLow = m_ui->Slider_rgb_G_Low->value();
+    cf.gHigh = m_ui->Slider_rgb_G_High->value();
+    cf.bLow = m_ui->Slider_rgb_B_Low->value();
+    cf.bHigh = m_ui->Slider_rgb_B_High->value();
+    cf.hLow = m_ui->Slider_hsv_H_Low->value();
+    cf.hHigh = m_ui->Slider_hsv_H_High->value();
+    cf.sLow = m_ui->Slider_hsv_S_Low->value();
+    cf.sHigh = m_ui->Slider_hsv_S_High->value();
+    cf.vLow = m_ui->Slider_hsv_V_Low->value();
+    cf.vHigh = m_ui->Slider_hsv_V_High->value();
 }
 
 void FilterTabWidget::loadFromConfig(const PipelineConfig& config)
 {
-    setFilterConfig(
-        static_cast<int>(config.colorFilter.mode),
-        config.colorFilter.grayLow,
-        config.colorFilter.grayHigh
-    );
+    const ScopedWidgetSignals rendering(this);
+    const auto& cf = config.colorFilter;
+    m_ui->comboBox_filterMode->setCurrentIndex(static_cast<int>(cf.mode));
+    m_ui->stackedWidget_filter->setCurrentIndex(static_cast<int>(cf.mode));
+    m_ui->Slider_grayLow->setValue(cf.grayLow);
+    m_ui->spinBox_grayLow->setValue(cf.grayLow);
+    m_ui->Slider_grayHigh->setValue(cf.grayHigh);
+    m_ui->spinBox_grayHigh->setValue(cf.grayHigh);
+    m_ui->Slider_rgb_R_Low->setValue(cf.rLow);
+    m_ui->spinBox_rgb_R_Low->setValue(cf.rLow);
+    m_ui->Slider_rgb_R_High->setValue(cf.rHigh);
+    m_ui->spinBox_rgb_R_High->setValue(cf.rHigh);
+    m_ui->Slider_rgb_G_Low->setValue(cf.gLow);
+    m_ui->spinBox_rgb_G_Low->setValue(cf.gLow);
+    m_ui->Slider_rgb_G_High->setValue(cf.gHigh);
+    m_ui->spinBox_rgb_G_High->setValue(cf.gHigh);
+    m_ui->Slider_rgb_B_Low->setValue(cf.bLow);
+    m_ui->spinBox_rgb_B_Low->setValue(cf.bLow);
+    m_ui->Slider_rgb_B_High->setValue(cf.bHigh);
+    m_ui->spinBox_rgb_B_High->setValue(cf.bHigh);
+    m_ui->Slider_hsv_H_Low->setValue(cf.hLow);
+    m_ui->spinBox_hsv_H_Low->setValue(cf.hLow);
+    m_ui->Slider_hsv_H_High->setValue(cf.hHigh);
+    m_ui->spinBox_hsv_H_High->setValue(cf.hHigh);
+    m_ui->Slider_hsv_S_Low->setValue(cf.sLow);
+    m_ui->spinBox_hsv_S_Low->setValue(cf.sLow);
+    m_ui->Slider_hsv_S_High->setValue(cf.sHigh);
+    m_ui->spinBox_hsv_S_High->setValue(cf.sHigh);
+    m_ui->Slider_hsv_V_Low->setValue(cf.vLow);
+    m_ui->spinBox_hsv_V_Low->setValue(cf.vLow);
+    m_ui->Slider_hsv_V_High->setValue(cf.vHigh);
+    m_ui->spinBox_hsv_V_High->setValue(cf.vHigh);
 }
-

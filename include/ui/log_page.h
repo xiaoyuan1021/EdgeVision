@@ -25,10 +25,10 @@ signals:
     void requestGoHome();
 
 private slots:
-    void on_btn_clearLog_clicked();
-    void on_btn_openLog_clicked();
-    void on_btn_home_clicked();
-    void on_combo_logLevel_currentIndexChanged(int index);
+    void onClearLogClicked();
+    void onOpenLogClicked();
+    void onHomeClicked();
+    void onLogLevelChanged(int index);
 
 private:
     void loadLogLevelConfig();

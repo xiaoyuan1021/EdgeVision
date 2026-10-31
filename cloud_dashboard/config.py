@@ -15,6 +15,6 @@ MQTT_CONFIG = {
 }
 
 DEVICE_TIMEOUT_SECONDS = 75
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.db")
+DB_PATH = os.environ.get("DASHBOARD_DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.db"))
 MAX_RESULTS = 2000
 MAX_HOURLY_ENTRIES = 168  # 7 days * 24 hours

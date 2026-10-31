@@ -39,14 +39,12 @@ private:
 class StepAlgorithmQueue : public IPipelineStep
 {
 public:
-    StepAlgorithmQueue(ImageProcessor* proc, const QVector<AlgorithmStep>* queue)
-        : m_processor(proc), m_algorithmQueue(queue) {}
+    explicit StepAlgorithmQueue(ImageProcessor* proc) : m_processor(proc) {}
 
     void run(PipelineContext& ctx) override;
     StepType stepType() const override { return StepType::AlgorithmQueue; }
 private:
     ImageProcessor* m_processor = nullptr;
-    const QVector<AlgorithmStep>* m_algorithmQueue = nullptr;
 };
 
 // 5) 形状筛选

@@ -17,11 +17,15 @@ LogPage::LogPage(QWidget* parent)
     , m_ui(new Ui::LogPage)
 {
     m_ui->setupUi(this);
+    connect(m_ui->btn_clearLog, &QPushButton::clicked, this, &LogPage::onClearLogClicked);
+    connect(m_ui->btn_openLog, &QPushButton::clicked, this, &LogPage::onOpenLogClicked);
+    connect(m_ui->btn_home, &QPushButton::clicked, this, &LogPage::onHomeClicked);
+    connect(m_ui->combo_logLevel, &QComboBox::currentIndexChanged, this, &LogPage::onLogLevelChanged);
 }
 
 LogPage::~LogPage()
 {
-    m_ui = nullptr;
+    delete m_ui;
 }
 
 void LogPage::initialize()
@@ -44,26 +48,26 @@ void LogPage::appendLog(const QString& message)
 
 void LogPage::clearLog()
 {
-    m_ui->textEdit_log->clear();
+    clearLogUi();
     spdlog::info("日志已清空");
 }
 
-void LogPage::on_btn_clearLog_clicked()
+void LogPage::onClearLogClicked()
 {
     clearLog();
 }
 
-void LogPage::on_btn_openLog_clicked()
+void LogPage::onOpenLogClicked()
 {
     openLogFolder(true);
 }
 
-void LogPage::on_btn_home_clicked()
+void LogPage::onHomeClicked()
 {
     emit requestGoHome();
 }
 
-void LogPage::on_combo_logLevel_currentIndexChanged(int index)
+void LogPage::onLogLevelChanged(int index)
 {
     // Convert combo index to spdlog level
     spdlog::level::level_enum level;

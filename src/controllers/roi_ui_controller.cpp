@@ -35,6 +35,7 @@ RoiUiController::~RoiUiController()
 
 void RoiUiController::setupTreeView(QTreeWidget* treeView)
 {
+    if (m_treeView == treeView) return;
     m_treeView = treeView;
     
     // 设置树形控件属性
@@ -43,8 +44,8 @@ void RoiUiController::setupTreeView(QTreeWidget* treeView)
     m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
     
     // 连接信号
-    connect(m_treeView, &QTreeWidget::itemClicked,
-            this, &RoiUiController::onRoiTreeItemClicked);
+    connect(m_treeView, &QTreeWidget::currentItemChanged, this,
+            [this](QTreeWidgetItem* current, QTreeWidgetItem*) { onRoiTreeItemClicked(current, 0); });
     connect(m_treeView, &QTreeWidget::customContextMenuRequested,
             this, &RoiUiController::onRoiTreeContextMenu);
     // 连接绘制ROI完成信号
@@ -285,10 +286,9 @@ void RoiUiController::refreshRoiTreeView()
 
 void RoiUiController::rebuildTreeItems()
 {
+    const QSignalBlocker rebuilding(m_treeView);
     // 阻塞信号，防止setCurrentItem触发itemClicked递归
-    m_treeView->blockSignals(true);
     m_treeView->clear();
-    m_treeView->blockSignals(false);
 
     const QList<RoiConfig> rois = m_roiManager.getRoiConfigs();
 
@@ -332,6 +332,8 @@ void RoiUiController::rebuildTreeItems()
             detectionItem->setText(0, detection.itemName);
             detectionItem->setData(0, Qt::UserRole, detection.itemId);
             detectionItem->setData(0, Qt::UserRole + 1, "detection");
+            if (roi.roiId == previouslySelectedRoiId && detection.itemId == m_currentSelectedDetectionId)
+                itemToSelect = detectionItem;
 
             QColor detectionColor;
             switch (detection.type) {
@@ -359,20 +361,18 @@ void RoiUiController::rebuildTreeItems()
 
     // 临时保存 itemToSelect 引用，供 restoreSelection 使用
     // 通过设置当前选中项来传递信息（blockSignals 已解除）
-    m_treeView->blockSignals(true);
     if (itemToSelect) {
         m_treeView->setCurrentItem(itemToSelect);
     } else if (m_treeView->topLevelItemCount() > 0) {
         // 没有匹配项时，选择第一个ROI（而非最后一个，避免覆盖用户预期）
         m_treeView->setCurrentItem(m_treeView->topLevelItem(0));
     }
-    m_treeView->blockSignals(false);
 }
 
 void RoiUiController::restoreSelection()
 {
+    const QSignalBlocker restoring(m_treeView);
     // 读取当前树形视图的选中项
-    m_treeView->blockSignals(true);
     QTreeWidgetItem* currentItem = m_treeView->currentItem();
     QString newSelectedId;
     if (currentItem) {
@@ -384,7 +384,6 @@ void RoiUiController::restoreSelection()
             newSelectedId = currentItem->data(0, Qt::UserRole).toString();
         }
     }
-    m_treeView->blockSignals(false);
 
     bool selectionChanged = (newSelectedId != m_currentSelectedRoiId);
     m_currentSelectedRoiId = newSelectedId;
@@ -420,6 +419,7 @@ void RoiUiController::handleRoiSelection(const QString& roiId)
     // 如果切换了ROI，先保存旧ROI的配置，再加载新ROI的配置
     if (roiChanged) {
         saveCurrentRoiPipelineConfig();
+        m_currentSelectedDetectionId.clear();
         m_currentSelectedRoiId = roiId;
         loadRoiPipelineConfig(m_currentSelectedRoiId);
     } else {
@@ -445,6 +445,20 @@ void RoiUiController::handleRoiSelection(const QString& roiId)
 void RoiUiController::activateDetectionItem(const QString& roiId, const QString& detectionId)
 {
     if (roiId.isEmpty() || detectionId.isEmpty()) return;
+    if (m_currentSelectedRoiId != roiId) handleRoiSelection(roiId);
+    m_currentSelectedDetectionId = detectionId;
+    if (m_treeView) {
+        const QSignalBlocker selecting(m_treeView);
+        for (int i = 0; i < m_treeView->topLevelItemCount(); ++i) {
+            auto* roiItem = m_treeView->topLevelItem(i);
+            if (roiItem->data(0, Qt::UserRole).toString() != roiId) continue;
+            for (int j = 0; j < roiItem->childCount(); ++j) {
+                auto* item = roiItem->child(j);
+                if (item->data(0, Qt::UserRole).toString() == detectionId) m_treeView->setCurrentItem(item);
+            }
+        }
+    }
+    if (m_detectionConfigController) m_detectionConfigController->setSelection(roiId, detectionId);
     emit detectionItemSelected(roiId, detectionId);
 }
 
@@ -641,13 +655,6 @@ bool RoiUiController::autoSelectFirstDetectionItem()
         handleRoiSelection(roi.roiId);
         activateDetectionItem(roi.roiId, roi.detectionItems.first().itemId);
 
-        for (int i = 0; i < m_treeView->topLevelItemCount(); ++i) {
-            QTreeWidgetItem* item = m_treeView->topLevelItem(i);
-            if (item && item->data(0, Qt::UserRole).toString() == roi.roiId) {
-                m_treeView->setCurrentItem(item);
-                break;
-            }
-        }
         return true;
     }
 

@@ -1,7 +1,8 @@
-﻿#include "line_tab_widget.h"
+#include "line_tab_widget.h"
 #include "ui_line_tab.h"
 #include "logger.h"
 #include "ui/slider_spinbox_binder.h"
+#include "ui/scoped_widget_signals.h"
 #include "image_view.h"
 #include "controllers/roi_ui_controller.h"
 #include <QMessageBox>
@@ -34,6 +35,9 @@ void LineDetectTabWidget::updateFromPipeline(const PipelineContext& ctx)
 
 void LineDetectTabWidget::initialize()
 {
+    if (m_initialized) return;
+    m_initialized = true;
+    const ScopedWidgetSignals rendering(this);
     // 设置Slider范围和步长
     m_ui->Slider_HoughPThreshold->setRange(1, 200);
     m_ui->Slider_HoughPThreshold->setSingleStep(1);
@@ -67,20 +71,6 @@ void LineDetectTabWidget::initialize()
     connect(m_ui->Slider_HoughPThreshold,&QSlider::valueChanged,this,&LineDetectTabWidget::onLineThresholdChanged);
     connect(m_ui->Slider_HoughPMinLineLength,&QSlider::valueChanged,this,&LineDetectTabWidget::onLineMinLengthChanged);
     connect(m_ui->Slider_HoughPMaxLineGap,&QSlider::valueChanged,this,&LineDetectTabWidget::onLineMaxGapChanged);
-
-    // SpinBox直接输入时也触发Pipeline（用信号阻断防止Slider回调时重复触发）
-    connect(m_ui->SpinBox_HoughPThreshold, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-        const QSignalBlocker b(m_ui->Slider_HoughPThreshold);
-        onLineThresholdChanged(value);
-    });
-    connect(m_ui->SpinBox_HoughPMinLineLength, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-        const QSignalBlocker b(m_ui->Slider_HoughPMinLineLength);
-        onLineMinLengthChanged(value);
-    });
-    connect(m_ui->SpinBox_HoughPMaxLineGap, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
-        const QSignalBlocker b(m_ui->Slider_HoughPMaxLineGap);
-        onLineMaxGapChanged(value);
-    });
 
     bindSliderAndSpinBox(m_ui->Slider_HoughPThreshold, m_ui->SpinBox_HoughPThreshold);
     bindSliderAndSpinBox(m_ui->Slider_HoughPMinLineLength, m_ui->SpinBox_HoughPMinLineLength);
@@ -210,7 +200,7 @@ void LineDetectTabWidget::handleApply()
 
 LineDetectTabWidget::LineDetectState LineDetectTabWidget::getLineState() const
 {
-    LineDetectState state;
+    LineDetectState state = m_pipeline ? m_pipeline->getConfigSnapshot().lineDetect : LineDetectState{};
     state.algorithm = m_ui->comboBox_lineAlgorithm->currentIndex();
     state.threshold = m_ui->Slider_HoughPThreshold->value();
     state.minLength = m_ui->Slider_HoughPMinLineLength->value();
@@ -220,6 +210,7 @@ LineDetectTabWidget::LineDetectState LineDetectTabWidget::getLineState() const
 
 void LineDetectTabWidget::setLineState(const LineDetectState &state)
 {
+    const ScopedWidgetSignals rendering(this);
     const QSignalBlocker b1(m_ui->Slider_HoughPThreshold);
     const QSignalBlocker b2(m_ui->Slider_HoughPMinLineLength);
     const QSignalBlocker b3(m_ui->Slider_HoughPMaxLineGap);
@@ -228,6 +219,7 @@ void LineDetectTabWidget::setLineState(const LineDetectState &state)
     const QSignalBlocker sb3(m_ui->SpinBox_HoughPMaxLineGap);
 
     m_ui->comboBox_lineAlgorithm->setCurrentIndex(state.algorithm);
+    m_ui->stackedWidget_LineDetect->setCurrentIndex(state.algorithm == 0 ? 1 : 0);
     m_ui->Slider_HoughPThreshold->setValue(state.threshold);
     m_ui->Slider_HoughPMinLineLength->setValue(state.minLength);
     m_ui->Slider_HoughPMaxLineGap->setValue(state.maxGap);
@@ -235,24 +227,15 @@ void LineDetectTabWidget::setLineState(const LineDetectState &state)
     m_ui->SpinBox_HoughPThreshold->setValue(state.threshold);
     m_ui->SpinBox_HoughPMinLineLength->setValue(state.minLength);
     m_ui->SpinBox_HoughPMaxLineGap->setValue(state.maxGap);
+    m_ui->chk_enableReferenceLine->setChecked(state.enableReferenceLineMatch);
+    m_ui->spin_angleThreshold->setValue(state.angleThreshold);
+    m_ui->spin_distanceThreshold->setValue(state.distanceThreshold);
+    m_ui->spin_searchRegionWidth->setValue(state.searchRegionWidth);
 }
 
 void LineDetectTabWidget::setLineConfig(const LineDetectConfig& config)
 {
-    // 设置基础直线检测参数
-    LineDetectState state;
-    state.algorithm = config.algorithm;
-    state.threshold = config.threshold;
-    state.minLength = config.minLength;
-    state.maxGap = config.maxGap;
-    setLineState(state);
-
-    // 同步到PipelineConfig
-    if (m_pipeline) {
-        PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-        cfg.lineDetect = config;
-        m_pipeline->setConfig(cfg);
-    }
+    setLineState(config);
 }
 
 // ========== 参考线匹配槽函数 ==========
@@ -388,6 +371,7 @@ void LineDetectTabWidget::connectSignals(const SignalContext& ctx,
                                          std::function<void()> onExecutePipeline,
                                          std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onConfigSaved);
     m_onExecutePipeline = onExecutePipeline;
 
@@ -410,10 +394,7 @@ void LineDetectTabWidget::connectSignals(const SignalContext& ctx,
     connect(this, &LineDetectTabWidget::requestDrawReferenceLine,
             ctx.view, &ImageView::startReferenceLineDrawing);
     connect(this, &LineDetectTabWidget::requestClearReferenceLine,
-            ctx.view, [view = ctx.view, this]() {
-                view->clearReferenceLine();
-                if (m_onExecutePipeline) m_onExecutePipeline();
-            });
+            ctx.view, &ImageView::clearReferenceLine);
     connect(ctx.view, &ImageView::referenceLineDrawn,
             this, &LineDetectTabWidget::setReferenceLine);
 }
@@ -427,13 +408,18 @@ void LineDetectTabWidget::setReferenceLine(const cv::Point2f& start, const cv::P
         cfg.lineDetect.referenceLineStart = start;
         cfg.lineDetect.referenceLineEnd = end;
         cfg.lineDetect.referenceLineValid = true;
+        cfg.lineDetect.enableReferenceLineMatch = true;
+        cfg.lineDetect.enabled = false;
         m_pipeline->setConfig(cfg);
     }
 
     updateReferenceLineStatus();
 
     // 自动启用参考线匹配
-    m_ui->chk_enableReferenceLine->setChecked(true);
+    {
+        const QSignalBlocker blocker(m_ui->chk_enableReferenceLine);
+        m_ui->chk_enableReferenceLine->setChecked(true);
+    }
 
     if (m_onExecutePipeline) {
         m_onExecutePipeline();

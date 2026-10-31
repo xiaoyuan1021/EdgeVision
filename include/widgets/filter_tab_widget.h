@@ -30,16 +30,11 @@ signals:
     void filterConfigChanged();
 
 private slots:
-    void onSelectTypeChanged(int index);
-    void onConditionChanged(int index);
     void onFilterModeChanged(int index);
     void filterColorChannelsChanged();
 
 private:
     void setupConnections();
-    void syncGrayParameters();
-    void syncRGBParameters();
-    void syncHSVParameters();
 
 private:
     Ui::FilterTabWidget* m_ui;

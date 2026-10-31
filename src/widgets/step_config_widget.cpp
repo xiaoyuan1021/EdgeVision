@@ -56,6 +56,7 @@ void StepConfigWidget::connectSignals(const SignalContext& ctx,
                                        std::function<void()> onExecutePipeline,
                                        std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onConfigSaved);
     m_pipelineManager = ctx.pipelineManager;
     m_roiManager = ctx.roiManager;
@@ -1075,5 +1076,4 @@ void StepConfigWidget::loadFromConfig(const PipelineConfig& config)
     // 当配置变化时，重新构建步骤项以反映新的 stepEnabled 状态
     rebuildStepItems();
     updatePipelinePreview();
-    applyTabVisibility();
 }

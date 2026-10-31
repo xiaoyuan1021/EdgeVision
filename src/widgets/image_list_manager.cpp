@@ -17,6 +17,7 @@ ImageListManager::ImageListManager(
 
 void ImageListManager::init(QListWidget* listWidget, QPushButton* addBtn, QPushButton* removeBtn)
 {
+    if (m_listWidget == listWidget) return;
     m_listWidget = listWidget;
 
     connect(addBtn, &QPushButton::clicked, this, &ImageListManager::onAddClicked);
@@ -32,6 +33,7 @@ void ImageListManager::init(QListWidget* listWidget, QPushButton* addBtn, QPushB
 
 void ImageListManager::refresh()
 {
+    const QSignalBlocker blocker(m_listWidget);
     m_listWidget->clear();
 
     QStringList imageIds = m_roiManager.getImageIds();
@@ -40,11 +42,8 @@ void ImageListManager::refresh()
         QListWidgetItem* item = new QListWidgetItem(imageName);
         item->setData(Qt::UserRole, imageId);
 
-        if (imageId == m_roiManager.getCurrentImageId()) {
-            item->setSelected(true);
-        }
-
         m_listWidget->addItem(item);
+        if (imageId == m_roiManager.getCurrentImageId()) m_listWidget->setCurrentItem(item);
     }
 }
 
@@ -125,6 +124,7 @@ void ImageListManager::onImageAdded(const QString& imageId)
 
 void ImageListManager::onImageRemoved(const QString& imageId)
 {
+    const QSignalBlocker blocker(m_listWidget);
     for (int i = 0; i < m_listWidget->count(); ++i) {
         QListWidgetItem* item = m_listWidget->item(i);
         if (item->data(Qt::UserRole).toString() == imageId) {
@@ -138,10 +138,13 @@ void ImageListManager::onImageRemoved(const QString& imageId)
 
 void ImageListManager::onCurrentImageChanged(const QString& imageId)
 {
+    const QSignalBlocker blocker(m_listWidget);
     for (int i = 0; i < m_listWidget->count(); ++i) {
         QListWidgetItem* item = m_listWidget->item(i);
-        bool isSelected = (item->data(Qt::UserRole).toString() == imageId);
-        item->setSelected(isSelected);
+        if (item->data(Qt::UserRole).toString() == imageId) {
+            m_listWidget->setCurrentItem(item);
+            break;
+        }
     }
 
     const cv::Mat& currentImage = m_roiManager.getFullImage();

@@ -31,6 +31,7 @@ public:
 
     // ==================== 图像管理 ====================
 
+    void setVideoFrame(const cv::Mat& frame);
     void setFullImage(const cv::Mat &img, const QString &filePath = QString());
     cv::Mat getFullImage() const;
     void clear();
@@ -126,6 +127,7 @@ public:
     void applyProfile(const InspectionProfile& profile, const QSize& currentImageSize);
 
 signals:
+    void inputChanged(); // Image pixels, active ROI, or ROI geometry changed
     void roiConfigChanged();
     void imageAdded(const QString& imageId);
     void imageRemoved(const QString& imageId);

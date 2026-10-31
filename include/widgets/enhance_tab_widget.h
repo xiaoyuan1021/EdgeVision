@@ -7,7 +7,6 @@
 #include <QStack>
 #include <QSignalBlocker>
 #include <functional>
-#include "ui_enhance_tab.h"
 
 
 namespace Ui {
@@ -40,9 +39,9 @@ signals:
 
 private slots:
     void onSliderChanged();
-    void on_btn_resetBC_clicked();
-    void on_btn_saveBC_clicked();
-    void on_btn_undoBC_clicked();
+    void onResetClicked();
+    void onSaveClicked();
+    void onUndoClicked();
 
 private:
     // 复用 EnhanceConfig 类型定义

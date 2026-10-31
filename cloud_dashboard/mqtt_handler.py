@@ -7,29 +7,32 @@ import queue
 import time
 import threading
 from collections import deque
+from copy import deepcopy
 from datetime import datetime
 
 from config import MQTT_CONFIG, DEVICE_TIMEOUT_SECONDS
-from db import db_upsert_device, db_insert_result, db_insert_heartbeat
 
 import logging
 _log = logging.getLogger("dashboard").info
 
 
 class MQTTHandler:
-    def __init__(self, app_state):
+    def __init__(self, app_state, database, mqtt_config=None):
         self.s = app_state
+        self.database = database
+        self.config = deepcopy(mqtt_config if mqtt_config is not None else MQTT_CONFIG)
         self._recent_results = set()
         self._recent_order = deque()
         self._recent_lock = threading.Lock()
 
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code == 0:
-            self.s["mqtt_connected"] = True
-            _log(f"[MQTT] 已连接 {MQTT_CONFIG['host']}:{MQTT_CONFIG['port']}")
+            with self.s["data_lock"]:
+                self.s["mqtt_connected"] = True
+            _log(f"[MQTT] 已连接 {self.config['host']}:{self.config['port']}")
             topics = [
-                (MQTT_CONFIG["topics"]["results"], MQTT_CONFIG["qos"]),
-                (MQTT_CONFIG["topics"]["heartbeat"], MQTT_CONFIG["qos"]),
+                (self.config["topics"]["results"], self.config["qos"]),
+                (self.config["topics"]["heartbeat"], self.config["qos"]),
             ]
             client.subscribe(topics)
             self._broadcast_sse("mqtt_status", {"connected": True})
@@ -37,7 +40,8 @@ class MQTTHandler:
             _log(f"[MQTT] 连接失败, reason_code={reason_code}")
 
     def on_disconnect(self, client, userdata, flags, reason_code, properties=None):
-        self.s["mqtt_connected"] = False
+        with self.s["data_lock"]:
+            self.s["mqtt_connected"] = False
         _log(f"[MQTT] 断开连接 (reason_code={reason_code})")
         self._broadcast_sse("mqtt_status", {"connected": False})
 
@@ -48,9 +52,9 @@ class MQTTHandler:
             return
         if not isinstance(payload, dict):
             return
-        if msg.topic == MQTT_CONFIG["topics"]["heartbeat"]:
+        if msg.topic == self.config["topics"]["heartbeat"]:
             self._handle_heartbeat(payload)
-        elif msg.topic == MQTT_CONFIG["topics"]["results"]:
+        elif msg.topic == self.config["topics"]["results"]:
             self._handle_result(payload)
 
     def _handle_heartbeat(self, payload):
@@ -76,12 +80,17 @@ class MQTTHandler:
                 dev["last_ts"] = now
                 dev["uptime"] = payload.get("uptime", dev["uptime"])
 
-        db_upsert_device(device_id, devices[device_id])
-        db_insert_heartbeat(device_id, "online", payload.get("uptime", 0),
-                            payload.get("ts", int(now * 1000)))
+            self.database.db_upsert_device(device_id, devices[device_id])
+            self.database.db_insert_heartbeat(device_id, "online", payload.get("uptime", 0),
+                                payload.get("ts", int(now * 1000)))
         self._broadcast_sse("heartbeat", {"deviceId": device_id})
 
     def _handle_result(self, payload):
+        # Deduplication and publication must not race a management clear/reset.
+        with self.s["data_lock"]:
+            self._handle_result_locked(payload)
+
+    def _handle_result_locked(self, payload):
         # Validate before updating deduplication, counters or device state.
         for field in ("reportId", "deviceId", "roiName", "imageName", "dateTime", "failReason"):
             if field in payload and not isinstance(payload[field], str):
@@ -140,12 +149,11 @@ class MQTTHandler:
             "dateTime": dt_str,
         }
 
-        self.s["results_deque"].append(record)
-
         today_str = datetime.now().strftime("%Y-%m-%d")
         is_today = dt_str.startswith(today_str)
 
         with self.s["data_lock"]:
+            self.s["results_deque"].append(record)
             devices = self.s["devices"]
             stats = self.s["stats"]
 
@@ -187,27 +195,38 @@ class MQTTHandler:
             dev["result_count"] = dev.get("result_count", 0) + 1
             dev["last_result"] = {"passed": passed, "roiName": roi_name, "dateTime": dt_str}
 
-        db_upsert_device(device_id, devices[device_id])
-        try:
-            db_insert_result(record)
-        except Exception as e:
-            _log(f"[MQTT] db_insert_result FAILED: {e}")
+            self.database.db_upsert_device(device_id, devices[device_id])
+            try:
+                self.database.db_insert_result(record)
+            except Exception as e:
+                _log(f"[MQTT] db_insert_result FAILED: {e}")
         self._broadcast_sse("result", record)
 
-    def check_device_timeout(self):
-        while True:
-            time.sleep(15)
-            now = time.time()
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with self.s["data_lock"]:
-                device_list = list(self.s["devices"].items())
-            for device_id, dev in device_list:
-                if dev["status"] == "online" and (now - dev.get("last_ts", 0)) > DEVICE_TIMEOUT_SECONDS:
-                    with self.s["data_lock"]:
-                        dev["status"] = "offline"
-                        dev["last_heartbeat"] = now_str
-                    db_upsert_device(device_id, dev)
-                    self._broadcast_sse("heartbeat", {"deviceId": device_id, "status": "offline"})
+    def expire_devices(self, now=None):
+        now = time.time() if now is None else now
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        expired = []
+        with self.s["data_lock"]:
+            for device_id, dev in self.s["devices"].items():
+                if dev["status"] == "online" and now - dev.get("last_ts", 0) > DEVICE_TIMEOUT_SECONDS:
+                    dev["status"] = "offline"
+                    dev["last_heartbeat"] = now_str
+                    self.database.db_upsert_device(device_id, dict(dev))
+                    expired.append(device_id)
+        for device_id in expired:
+            self._broadcast_sse("heartbeat", {"deviceId": device_id, "status": "offline"})
+
+    def check_device_timeout(self, stop_event, interval=15):
+        while not stop_event.wait(interval):
+            try:
+                self.expire_devices()
+            except Exception:
+                logging.getLogger("dashboard").exception("Device timeout sweep failed")
+
+    def clear_recent_results(self):
+        with self._recent_lock:
+            self._recent_results.clear()
+            self._recent_order.clear()
 
     def _broadcast_sse(self, event, data):
         with self.s["sse_lock"]:
@@ -215,7 +234,7 @@ class MQTTHandler:
             for q in list(self.s["sse_clients"]):
                 try:
                     q.put_nowait((event, data))
-                except (queue.Full, Exception):
+                except queue.Full:
                     dead.append(q)
             for q in dead:
                 try:

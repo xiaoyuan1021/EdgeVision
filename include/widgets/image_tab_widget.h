@@ -9,12 +9,14 @@ namespace Ui {
 class ImageTabWidget;
 }
 
-class ImageTabWidget : public QWidget, public ISignalConnectable {
+class ImageTabWidget : public QWidget, public ISignalConnectable, public IConfigurableTab {
     Q_OBJECT
 
 public:
     explicit ImageTabWidget(IPipelineAccess* pipelineAccess, QWidget* parent = nullptr);
     ~ImageTabWidget();
+    void saveToConfig(PipelineConfig& config) const override;
+    void loadFromConfig(const PipelineConfig& config) override;
 
     void connectSignals(const SignalContext& ctx,
                         std::function<void()> onExecutePipeline,
@@ -24,8 +26,7 @@ signals:
     void channelChanged(int channel);
 
 private slots:
-    void on_btn_applyChannel_clicked();
-    void on_comboBox_channels_currentIndexChanged(int index);
+    void onApplyChannelClicked();
 
 private:
     PipelineConfig::Channel channelFromIndex(int index) const;

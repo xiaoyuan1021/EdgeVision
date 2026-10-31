@@ -66,22 +66,22 @@ public:
     void requestRefresh();
 
 private slots:
-    void on_btn_pipelineConfig_clicked();
-    void on_btn_addROI_clicked();
-    void on_btn_deleteROI_clicked();
-    void on_btn_switchROI_clicked();
-    void on_tabWidget_currentChanged(int index);
-    void on_btn_Log_clicked();
-    void on_btn_Home_clicked();
-    void on_btn_saveConfig_clicked();
-    void on_btn_importConfig_clicked();
-    void on_btn_startAutoDetection_clicked();
+    void onPipelineConfigClicked();
+    void onAddRoiClicked();
+    void onDeleteRoiClicked();
+    void onSwitchRoiClicked();
+    void onTabChanged(int index);
+    void onLogClicked();
+    void onHomeClicked();
+    void onSaveConfigClicked();
+    void onImportConfigClicked();
+    void onStartAutoDetectionClicked();
     void startAutoDetection();
-    void on_btn_stopAutoDetection_clicked();
-    void on_btn_cloudPlatform_clicked();
-    void on_btn_saveToProfile_clicked();
-    void on_btn_loadFromProfile_clicked();
-    void on_btn_importFolder_clicked();
+    void onStopAutoDetectionClicked();
+    void onCloudPlatformClicked();
+    void onSaveToProfileClicked();
+    void onLoadFromProfileClicked();
+    void onImportFolderClicked();
 
 private:
     // 初始化方法

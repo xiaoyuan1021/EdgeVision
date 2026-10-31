@@ -2,9 +2,7 @@
 #include "algorithm/image_utils.h"
 #include "algorithm/display_renderer.h"
 #include "widgets/i_tab_interfaces.h"
-#include "widgets/object_detection_tab_widget.h"
 #include "logger.h"
-#include "utils/benchmark.h"
 
 PipelineResultHandler::PipelineResultHandler(QObject *parent)
     : QObject(parent)
@@ -22,35 +20,27 @@ void PipelineResultHandler::setDependencies(TabManager* tabManager, RoiManager* 
 void PipelineResultHandler::onPipelineResult(const PipelineResult& result)
 {
     try {
+        if (!m_pipelineManager || !m_roiManager || !m_pipelineManager->isCurrentResult(result, m_isVideoMode)) return;
+        const auto& identity = result.request().identity();
+        if (identity.imageId != m_roiManager->getCurrentImageId()
+            || identity.roiId != m_roiManager->getActiveRoiId()) return;
         if (!result.isSuccess()) {
             spdlog::debug("[PipelineResult] Pipeline执行失败: {}", result.errorMessage().toStdString());
             emit statusMessage("处理失败: " + result.errorMessage(), 3000);
             return;
         }
 
+        m_pipelineManager->acceptResult(result);
         const PipelineContext& ctx = result.context();
         cv::Mat displayImage = DisplayRenderer::render(
-            ctx, m_pipelineManager->getDisplayMode());
+            ctx, m_pipelineManager->getDisplayMode()).clone();
 
-        // [NOTE] 将结果存入per-ROI缓存
-        if (m_roiManager) {
-            QString activeRoiId = m_roiManager->getActiveRoiId();
-            if (!activeRoiId.isEmpty()) {
-                m_pipelineManager->cacheResult(activeRoiId, ctx);
-            }
-        }
+        if (!m_isVideoMode) m_pipelineManager->cacheResult(identity.roiId, ctx);
 
         // 通过 IResultUpdatable 接口分发结果
         distributeResults(ctx);
 
-        // 目标检测特殊处理（不走 Pipeline），单独计时
-        // [NOTE] 传入 ctx.srcBgr 作为检测源图像，避免异步竞态导致检测跑在错误的图片上
-        double pipelineMs = result.elapsedMs();
-        double detectionMs = 0;
-        {
-            BenchmarkTimer t("ObjectDetection", &detectionMs);
-            handleObjectDetection(displayImage, ctx.srcBgr);
-        }
+        if (ctx.objectDetectionExecuted) drawDetectionResults(displayImage, ctx.objectDetectionResults);
 
         if (m_imageView) {
             QImage qimg = ImageUtils::matToQImage(displayImage);
@@ -58,7 +48,7 @@ void PipelineResultHandler::onPipelineResult(const PipelineResult& result)
         }
 
         // 显示总处理时间（Pipeline + 目标检测）
-        double totalMs = pipelineMs + detectionMs;
+        double totalMs = result.elapsedMs();
         QString msg = QString("处理完成 (%1 ms)").arg(totalMs, 0, 'f', 1);
         emit statusMessage(msg, 2000);
         emit pipelineTimingUpdated(totalMs);
@@ -91,33 +81,8 @@ void PipelineResultHandler::distributeResults(const PipelineContext& result)
 
 void PipelineResultHandler::setVideoMode(bool active)
 {
+    if (m_isVideoMode != active && m_pipelineManager) m_pipelineManager->clearLastResult();
     m_isVideoMode = active;
-}
-
-void PipelineResultHandler::handleObjectDetection(cv::Mat& displayImage, const cv::Mat& pipelineSource)
-{
-    if (!m_tabManager || !m_roiManager || !m_pipelineManager) return;
-
-    // 检查Apply按钮是否已启用检测
-    if (!m_pipelineManager->getConfigSnapshot().objectDetectionApplyEnabled) return;
-
-    if (auto* objTab = m_tabManager->getTabAs<ObjectDetectionTabWidget>("目标检测"); objTab && objTab->isModelLoaded()) {
-        // [NOTE] 使用 Pipeline 实际处理的源图像进行检测，而不是 m_roiManager->getCurrentImage()
-        // 避免异步 Pipeline 执行期间用户切换图片，导致检测跑在错误的图片上
-        cv::Mat detectImage = pipelineSource;
-        if (!detectImage.empty()) {
-            std::vector<DetectionResult> detResults;
-            if (m_isVideoMode) {
-                // 视频推理：使用 ONNX Runtime（GPU 加速）
-                detResults = objTab->runDetectionOrt(detectImage);
-            } else {
-                // 静图检测：使用 OpenCV DNN
-                detResults = objTab->runDetection(detectImage);
-            }
-            objTab->updateDetectionResults(detResults);
-            drawDetectionResults(displayImage, detResults);
-        }
-    }
 }
 
 void PipelineResultHandler::drawDetectionResults(cv::Mat& image, const std::vector<DetectionResult>& results)

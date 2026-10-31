@@ -59,8 +59,8 @@ def test_roi_rename_into_existing_roi(client, database, state):
 
 
 def test_clear_data(client, api, database, state):
-    api.handler._handle_heartbeat({"deviceId": "edge"})
-    api.handler._handle_result({"deviceId": "edge", "reportId": "one"})
+    api.runtime.handler._handle_heartbeat({"deviceId": "edge"})
+    api.runtime.handler._handle_result({"deviceId": "edge", "reportId": "one"})
     assert client.post("/api/debug/clear-data", json={}).status_code == 200
     assert state["devices"] == {}
     assert list(state["results_deque"]) == []
@@ -100,8 +100,7 @@ def test_diag_and_summary(client, database):
 def test_simulation_caps_count(client, api, monkeypatch):
     from unittest.mock import Mock
     fake_handler = Mock()
-    monkeypatch.setattr(api, "handler", fake_handler)
-    monkeypatch.setattr(api.time, "sleep", lambda _: None)
+    monkeypatch.setattr(api.runtime, "handler", fake_handler)
     response = client.post("/api/simulate", json={"count": 25})
     assert response.json == {"ok": True, "count": 20}
     assert fake_handler._handle_result.call_count == 20

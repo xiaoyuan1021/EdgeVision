@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QDir>
 #include <spdlog/spdlog.h>
+#include <stdexcept>
 
 bool DnnInference::loadModel(const QString& modelPath, const QString& configPath, bool useGpu)
 {
@@ -144,7 +145,7 @@ std::vector<DetectionResult> DnnInference::detect(const cv::Mat& input,
         if (outputNames.empty())
         {
             spdlog::error("DnnInference: no output layers found");
-            return results;
+            throw std::runtime_error("Invalid DNN detection output");
         }
 
         std::vector<cv::Mat> outputs;
@@ -154,10 +155,12 @@ std::vector<DetectionResult> DnnInference::detect(const cv::Mat& input,
         // 即每一列是一个检测结果，前4行是 x,y,w,h，后面是各类别置信度
         if (outputs.empty())
         {
-            return results;
+            throw std::runtime_error("Invalid DNN detection output");
         }
 
         cv::Mat output = outputs[0];
+        if (output.dims != 3 || output.size[0] != 1 || output.size[1] < 5 || output.type() != CV_32F)
+            throw std::runtime_error("Expected YOLO output [1, 4+classes, detections]");
         int numDetections = output.size[2];   // 检测数量
         int numAttributes = output.size[1];   // 4 + num_classes
 
@@ -246,10 +249,12 @@ std::vector<DetectionResult> DnnInference::detect(const cv::Mat& input,
     catch (const cv::Exception& e)
     {
         spdlog::error("DnnInference: detect OpenCV exception - {}", e.what());
+        throw;
     }
     catch (const std::exception& e)
     {
         spdlog::error("DnnInference: detect exception - {}", e.what());
+        throw;
     }
 
     return results;

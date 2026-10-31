@@ -11,7 +11,7 @@ namespace Ui
 class LineTabForm;
 }
 
-class LineDetectTabWidget : public QWidget, public ISignalConnectable, public IResultUpdatable
+class LineDetectTabWidget : public QWidget, public ISignalConnectable, public IResultUpdatable, public IConfigurableTab
 {
     Q_OBJECT
 
@@ -30,11 +30,14 @@ public:
 
     /// [NOTE] 设置直线检测配置（从DetectionItem.config恢复到UI）
     void setLineConfig(const LineDetectConfig& config);
+    void loadFromConfig(const PipelineConfig& config) override { setLineConfig(config.lineDetect); }
+    void saveToConfig(PipelineConfig& config) const override { config.lineDetect = getLineState(); }
 
 private:
     IPipelineAccess* m_pipeline;
     std::function<void()> m_onExecutePipeline;
     Ui::LineTabForm* m_ui;
+    bool m_initialized = false;
 
     // 复用 LineDetectConfig 类型定义（独立实例，不影响其他 Config）
     using LineDetectState = LineDetectConfig;

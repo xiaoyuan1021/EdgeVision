@@ -30,7 +30,6 @@ void JudgeTabWidget::updateFromPipeline(const PipelineContext& ctx)
 
 void JudgeTabWidget::setCurrentRegionCount(int count)
 {
-    count = m_pipeline->getLastContext().regionCount;
     m_ui->lineEdit_nowRegions->setText(QString::number(count));
 }
 
@@ -96,6 +95,7 @@ void JudgeTabWidget::connectSignals(const SignalContext& ctx,
                                     std::function<void()> onExecutePipeline,
                                     std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onExecutePipeline); Q_UNUSED(onConfigSaved);
     connect(this, &JudgeTabWidget::judgeConfigChanged,
             ctx.roiCtrl, &RoiUiController::updateBlobDetectionConfig);

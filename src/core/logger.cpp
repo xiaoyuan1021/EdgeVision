@@ -9,6 +9,9 @@
 #include <QTextCursor>
 #include <QTextCharFormat>
 #include <QTimer>
+#include <QPointer>
+#include <QTextDocument>
+#include <deque>
 
 #include "spdlog/sinks/rotating_file_sink.h"
 
@@ -18,7 +21,7 @@
 static std::shared_ptr<spdlog::logger> s_logger;
 static std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> s_fileSink;
 static QString s_logFilePath;
-static QTextEdit* s_uiTextEdit = nullptr;
+static QPointer<QTextEdit> s_uiTextEdit;
 static spdlog::level::level_enum s_uiLevel = spdlog::level::debug;
 static size_t s_lastRenderedIndex = 0;   // for incremental append
 static spdlog::level::level_enum s_lastRenderedLevel = spdlog::level::debug;  // to detect level change
@@ -51,7 +54,11 @@ struct LogEntry {
     spdlog::level::level_enum level;
 };
 
-static std::vector<LogEntry> s_sessionBuffer;
+// Writers and UI snapshots share this lock; rendering never holds it.
+static constexpr size_t kSessionCapacity = 10000;
+static std::mutex s_sessionMutex;
+static std::deque<LogEntry> s_sessionBuffer;
+static size_t s_firstSequence = 0;
 
 class SessionBufferSink : public spdlog::sinks::base_sink<std::mutex> {
 protected:
@@ -59,7 +66,12 @@ protected:
         spdlog::memory_buf_t buf;
         formatter_->format(msg, buf);
         QString text = QString::fromUtf8(buf.data(), static_cast<int>(buf.size()));
+        std::lock_guard<std::mutex> lock(s_sessionMutex);
         s_sessionBuffer.push_back({text, msg.level});
+        if (s_sessionBuffer.size() > kSessionCapacity) {
+            s_sessionBuffer.pop_front();
+            ++s_firstSequence;
+        }
     }
     void flush_() override {}
 };
@@ -74,15 +86,25 @@ void rerenderSessionLogs()
     spdlog::level::level_enum minLevel = uiLogLevel();
     bool levelChanged = (minLevel != s_lastRenderedLevel);
 
-    // Level changed → full re-render needed
-    if (levelChanged) {
-        s_uiTextEdit->clear();
-        s_lastRenderedIndex = 0;
-        s_lastRenderedLevel = minLevel;
+    std::vector<LogEntry> pending;
+    size_t nextSequence;
+    bool reset;
+    {
+        std::lock_guard<std::mutex> lock(s_sessionMutex);
+        reset = levelChanged || s_lastRenderedIndex < s_firstSequence;
+        const size_t start = reset ? s_firstSequence : s_lastRenderedIndex;
+        nextSequence = s_firstSequence + s_sessionBuffer.size();
+        if (start < nextSequence) {
+            pending.assign(s_sessionBuffer.begin() + (start - s_firstSequence),
+                           s_sessionBuffer.end());
+        }
     }
-
-    // No new logs and no level change → nothing to do
-    if (s_lastRenderedIndex >= s_sessionBuffer.size() && !levelChanged) return;
+    if (reset) s_uiTextEdit->clear();
+    s_lastRenderedLevel = minLevel;
+    if (pending.empty()) {
+        s_lastRenderedIndex = nextSequence;
+        return;
+    }
 
     QTextCursor cursor(s_uiTextEdit->textCursor());
     cursor.movePosition(QTextCursor::End);
@@ -100,8 +122,7 @@ void rerenderSessionLogs()
     };
 
     // Incremental: only render new entries
-    for (size_t i = s_lastRenderedIndex; i < s_sessionBuffer.size(); ++i) {
-        const auto& entry = s_sessionBuffer[i];
+    for (const auto& entry : pending) {
         if (entry.level < minLevel) continue;
 
         QTextCharFormat fmt;
@@ -109,7 +130,7 @@ void rerenderSessionLogs()
         cursor.setCharFormat(fmt);
         cursor.insertText(entry.formatted + "\n");
     }
-    s_lastRenderedIndex = s_sessionBuffer.size();
+    s_lastRenderedIndex = nextSequence;
 }
 
 // ============================================================
@@ -119,7 +140,17 @@ void rerenderSessionLogs()
 void setupLogging(QTextEdit* uiTextEdit, const QString& logDir)
 {
     s_uiTextEdit = uiTextEdit;
-    s_sessionBuffer.clear();
+    {
+        std::lock_guard<std::mutex> lock(s_sessionMutex);
+        s_sessionBuffer.clear();
+        s_firstSequence = 0;
+    }
+    s_lastRenderedIndex = 0;
+    s_lastRenderedLevel = s_uiLevel;
+    if (uiTextEdit) {
+        uiTextEdit->clear();
+        uiTextEdit->document()->setMaximumBlockCount(static_cast<int>(kSessionCapacity));
+    }
 
     // 1) Create rotating file sink: 5MB max, 3 rotated files
     QDir dir(logDir);
@@ -204,5 +235,8 @@ bool openLogFolder(bool selectFile)
 
 void clearLogUi()
 {
-    // No-op: QTextEdit is managed by spdlog qt_sink; caller should clear directly
+    if (!s_uiTextEdit) return;
+    s_uiTextEdit->clear();
+    std::lock_guard<std::mutex> lock(s_sessionMutex);
+    s_lastRenderedIndex = s_firstSequence + s_sessionBuffer.size();
 }

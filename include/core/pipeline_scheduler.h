@@ -4,32 +4,26 @@
 #include <QTimer>
 #include <QThreadPool>
 #include <QQueue>
+#include <QSet>
 #include <QMutex>
 #include <QFutureWatcher>
 #include <QAtomicInt>
 #include "pipeline_request.h"
 #include "pipeline_result.h"
+#include <functional>
 
 class PipelineManager;
 
-/**
- * Pipeline调度器 - 统一管理所有pipeline执行请求
- * 
- * 设计原则：
- * 1. 单一入口：所有pipeline请求都通过这个类提交
- * 2. 消抖合并：短时间内多个请求只执行最后一个
- * 3. 去重过滤：相同配置的请求不重复执行
- * 4. 优先级队列：高优先级请求优先执行
- * 
- * 数据流：
- *   submit() → 队列 → 消抖 → 去重 → 线程池执行 → finished信号
- */
+// Owner-thread scheduler. Workers receive immutable snapshots only.
+// Reliable submissions reject overflow; preview submissions coalesce by caller.
 class PipelineScheduler : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit PipelineScheduler(PipelineManager* pipeline, QObject* parent = nullptr);
+    using Execute = std::function<PipelineContext(const cv::Mat&, const PipelineConfig&)>;
+    explicit PipelineScheduler(Execute execute, QObject* parent = nullptr);
+    enum class Policy { Reliable, LatestPreview };
     ~PipelineScheduler();
 
     // ========== 请求接口 ==========
@@ -47,7 +41,7 @@ public:
     /**
      * 提交pipeline执行请求（使用PipelineRequest对象）
      */
-    qint64 submit(PipelineRequest request);
+    qint64 submit(PipelineRequest request, Policy policy = Policy::Reliable);
 
     /**
      * 取消指定请求
@@ -63,21 +57,21 @@ public:
 
     /**
      * 设置消抖延迟（毫秒）
-     * 在此期间的多个请求会被合并为最后一个
+     * 首次请求开始有界等待窗口，预览请求按 caller 合并
      * 默认：100ms
      */
     void setDebounceMs(int ms);
 
     /**
      * 设置最大队列长度
-     * 超出时丢弃最旧的低优先级请求
+     * 可靠请求队列满时拒绝新请求，返回 -1 并发送 rejected
      * 默认：10
      */
     void setMaxQueueSize(int size);
 
     /**
      * 设置是否启用去重
-     * 启用时，相同配置的请求不会重复执行
+     * 启用时，相同 ID 的请求不会重复执行
      * 默认：true
      */
     void setDeduplicationEnabled(bool enabled);
@@ -108,6 +102,7 @@ signals:
      * 请求被取消
      */
     void cancelled(qint64 requestId);
+    void rejected(qint64 requestId);
 
 private slots:
     void onDebounceTimeout();
@@ -115,10 +110,10 @@ private slots:
 
 private:
     void processNext();
-    void executeRequest(const PipelineRequest& request);
+    void executeRequest(PipelineRequest request);
     void emitQueueChanged();
 
-    PipelineManager* m_pipeline;
+    Execute m_execute;
 
     // 调度配置
     QTimer* m_debounceTimer;
@@ -128,12 +123,12 @@ private:
 
     // 执行队列（按优先级排序）
     QQueue<PipelineRequest> m_queue;
+    QSet<qint64> m_previewIds;
     mutable QMutex m_queueMutex;
 
     // 状态标志
     QAtomicInt m_processing{0};
-    QAtomicInt m_lastSubmittedId{0};
-    QAtomicInt m_lastExecutedId{0};
+    QAtomicInteger<qint64> m_lastExecutedId{-1};
 
     // 当前执行的任务
     QFutureWatcher<PipelineResult>* m_watcher = nullptr;

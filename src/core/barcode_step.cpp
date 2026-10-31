@@ -97,12 +97,16 @@ void StepBarcodeRecognition::run(PipelineContext& ctx)
     {
         QString error = QString("条码识别错误: %1").arg(ex.what());
         ctx.barcodeStatus = error;
+        ctx.pass = false;
+        ctx.reason = error;
         spdlog::info("[Barcode] {}", error.toStdString());
     }
     catch (...)
     {
         QString error = "条码识别发生未知错误";
         ctx.barcodeStatus = error;
+        ctx.pass = false;
+        ctx.reason = error;
         spdlog::info("[Barcode] {}", error.toStdString());
     }
 }

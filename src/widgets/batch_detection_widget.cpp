@@ -1,4 +1,6 @@
-﻿#include "batch_detection_widget.h"
+#include "core/pipeline_executor.h"
+#include "algorithm/object_detection_service.h"
+#include "batch_detection_widget.h"
 #include "ui_batch_detection_tab.h"
 #include "roi_manager.h"
 #include "core/pipeline_manager.h"
@@ -133,7 +135,6 @@ void BatchDetectionWidget::startDetection(const QString& profileId)
     m_currentIndex = 0;
     m_stopRequested = false;
     m_paused = false;
-    m_pauseFlag.storeRelease(0);
     m_running = true;
 
     for (const QString& imageId : imageIds) {
@@ -159,23 +160,24 @@ void BatchDetectionWidget::startDetection(const QString& profileId)
 
 void BatchDetectionWidget::stopDetection()
 {
+    if (!m_running) return;
     m_stopRequested = true;
-    m_pauseFlag.storeRelease(0);
     m_paused = false;
+    processNextImage();
 }
 
 void BatchDetectionWidget::pauseDetection()
 {
+    if (!m_running || m_paused) return;
     m_paused = true;
-    m_pauseFlag.storeRelease(1);
     m_ui->btn_pause->setText("▶ 继续");
     m_ui->label_status->setText("已暂停");
 }
 
 void BatchDetectionWidget::resumeDetection()
 {
+    if (!m_running || !m_paused) return;
     m_paused = false;
-    m_pauseFlag.storeRelease(0);
     m_ui->btn_pause->setText("⏸ 暂停");
     processNextImage();
 }
@@ -234,6 +236,7 @@ void BatchDetectionWidget::onRowDoubleClicked(int row, int column)
 
 void BatchDetectionWidget::processNextImage()
 {
+    if (!m_running || m_taskInFlight) return;
     if (m_stopRequested) {
         finishDetection();
         return;
@@ -278,11 +281,11 @@ void BatchDetectionWidget::processNextImage()
         static_cast<int>((m_currentIndex * 100.0) / m_results.size()));
 
     // 在后台线程执行检测
-    QPointer<PipelineManager> pipelinePtr = m_pipelineManager;
     int idx = m_currentIndex;
 
+    m_taskInFlight = true;
     QFuture<ImageDetectionResult> future = QtConcurrent::run(
-        [pipelinePtr, imagePath, imageId, imageName, roiConfigs]() -> ImageDetectionResult {
+        [imagePath, imageId, imageName, roiConfigs]() -> ImageDetectionResult {
             // 创建图片级别的检测结果
             ImageDetectionResult imageResult;
             imageResult.imageId = imageId;
@@ -290,11 +293,7 @@ void BatchDetectionWidget::processNextImage()
             imageResult.imagePath = imagePath;
 
             try {
-                if (!pipelinePtr) {
-                    imageResult.passed = false;
-                    imageResult.failReason = "PipelineManager已被释放";
-                    return imageResult;
-                }
+
 
                 cv::Mat image = PathUtils::readImageFromFile(imagePath, cv::IMREAD_COLOR);
                 if (image.empty()) {
@@ -312,11 +311,11 @@ void BatchDetectionWidget::processNextImage()
                     if (roiRect.empty()) continue;
 
                     cv::Mat roiImage = image(roiRect).clone();
-                    PipelineContext ctx = pipelinePtr->execute(roiImage, roiConfig.pipelineConfig);
+                    PipelineContext ctx = PipelineExecutor::preprocess(roiImage, roiConfig.pipelineConfig);
 
                     // [NOTE] 使用DetectionEvaluator评估该ROI的所有检测项（与auto_detection_controller一致）
                     RoiDetectionResult roiResult = DetectionEvaluator::evaluateRoi(
-                        roiConfig, ctx, roiImage, nullptr);
+                        roiConfig, ctx, roiImage, ObjectDetectionService::detect);
                     roiResult.imageId = imageId;
 
                     // [NOTE] 关键修改：将ROI检测结果添加到图片级别的检测结果中
@@ -429,6 +428,7 @@ void BatchDetectionWidget::processNextImage()
 
             // 处理下一张
             m_currentIndex = idx + 1;
+            m_taskInFlight = false;
             processNextImage();
         }
     );
@@ -442,12 +442,14 @@ void BatchDetectionWidget::finishDetection()
 
     int passCount = 0, failCount = 0;
     for (const auto& r : m_results) {
+        if (!r.processed) continue;
         if (r.passed) passCount++;
         else failCount++;
     }
 
-    m_ui->progressBar->setValue(100);
-    m_ui->label_status->setText("检测完成");
+    const bool stopped = m_stopRequested;
+    if (!stopped) m_ui->progressBar->setValue(100);
+    m_ui->label_status->setText(stopped ? "检测已停止" : "检测完成");
     m_ui->label_summary->setText(
         QString("检测完成: 总计 %1 | ✅ 通过 %2 | ❌ 失败 %3 | 通过率: %4% | 耗时: %5s")
             .arg(m_results.size())

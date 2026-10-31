@@ -2,10 +2,20 @@ cmake_minimum_required(VERSION 3.16)
 
 project(EdgeVision VERSION 2.0.0 LANGUAGES CXX)
 
+include(cmake/MsvcDependencies.cmake)
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTOUIC_OPTIONS --no-autoconnection)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -50,10 +60,12 @@ set(INCLUDE_DIRS
 # 源文件收集（显式列出，新增文件时需手动添加）
 # ============================================================
 set(HEADERS
+    include/ui/scoped_widget_signals.h
     # core
     include/core/logger.h
     include/core/mqtt_client.h
     include/core/mqtt_manager.h
+    include/core/pipeline_executor.h
     include/core/pipeline.h
     include/core/pipeline_manager.h
     include/core/pipeline_request.h
@@ -66,6 +78,8 @@ set(HEADERS
     include/core/barcode_step.h
     include/core/i_pipeline_access.h
     # algorithm
+    include/algorithm/object_detection_service.h
+    include/data/object_detection_result.h
     include/algorithm/dnn_inference.h
     include/algorithm/detection_evaluator.h
     include/algorithm/image_processor.h
@@ -73,6 +87,7 @@ set(HEADERS
     include/algorithm/match_strategy.h
     include/algorithm/opencv_algorithm.h
     include/algorithm/ort_inference.h
+    include/algorithm/letterbox_geometry.h
     include/algorithm/zxing_barcode_reader.h
     include/algorithm/display_renderer.h
     # config
@@ -154,11 +169,11 @@ set(HEADERS
 )
 
 set(SOURCES
-    src/main.cpp
     # core
     src/core/logger.cpp
     src/core/mqtt_client.cpp
     src/core/mqtt_manager.cpp
+    src/core/pipeline_executor.cpp
     src/core/pipeline.cpp
     src/core/pipeline_manager.cpp
     src/core/pipeline_scheduler.cpp
@@ -170,6 +185,7 @@ set(SOURCES
     src/core/pipeline_image_filter_steps.cpp
     src/core/ocr_step.cpp
     # algorithm
+    src/algorithm/object_detection_service.cpp
     src/algorithm/dnn_inference.cpp
     src/algorithm/detection_evaluator.cpp
     src/algorithm/image_processor.cpp
@@ -245,21 +261,21 @@ set(RESOURCES
 # ============================================================
 # 创建可执行文件目标
 # ============================================================
-add_executable(EdgeVision
+add_library(EdgeVisionRuntime STATIC
     ${HEADERS}
     ${SOURCES}
     ${FORMS}
-    ${RESOURCES}
 )
+add_executable(EdgeVision src/main.cpp ${RESOURCES})
 
 # 设置包含路径
-target_include_directories(EdgeVision PRIVATE ${INCLUDE_DIRS})
+target_include_directories(EdgeVisionRuntime PUBLIC ${INCLUDE_DIRS})
 
 # 定义项目根目录宏，供代码使用
-target_compile_definitions(EdgeVision PRIVATE PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(EdgeVisionRuntime PUBLIC PROJECT_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 # 链接 Qt 库
-target_link_libraries(EdgeVision PRIVATE
+target_link_libraries(EdgeVisionRuntime PUBLIC
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
@@ -267,7 +283,7 @@ target_link_libraries(EdgeVision PRIVATE
 
 # Windows 系统库 (PDH 性能监控)
 if(WIN32)
-    target_link_libraries(EdgeVision PRIVATE pdh)
+    target_link_libraries(EdgeVisionRuntime PUBLIC pdh)
 endif()
 
 # ============================================================
@@ -279,7 +295,7 @@ set(OPENCV_RELEASE_LIB_DIR "${OPENCV_ROOT}/release/lib")
 set(OPENCV_RELEASE_BIN_DIR "${OPENCV_ROOT}/release/bin")
 
 # OpenCV 包含路径
-target_include_directories(EdgeVision PRIVATE
+target_include_directories(EdgeVisionRuntime PUBLIC
     "${OPENCV_ROOT}/include/opencv4"
     "${OPENCV_ROOT}/include/opencv4/opencv2/ximgproc"
 )
@@ -292,7 +308,7 @@ set(OPENCV_MODULES
 
 # Debug 链 opencv_xxx4d.lib，Release 链 opencv_xxx4.lib
 foreach(MODULE ${OPENCV_MODULES})
-    target_link_libraries(EdgeVision PRIVATE
+    target_link_libraries(EdgeVisionRuntime PUBLIC
         debug "${OPENCV_DEBUG_LIB_DIR}/opencv_${MODULE}4d.lib"
         optimized "${OPENCV_RELEASE_LIB_DIR}/opencv_${MODULE}4.lib"
     )
@@ -342,11 +358,11 @@ endif()
 # ============================================================
 set(ONNXRT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/onnxruntime")
 
-target_include_directories(EdgeVision PRIVATE
+target_include_directories(EdgeVisionRuntime PUBLIC
     "${ONNXRT_ROOT}/include"
 )
 
-target_link_libraries(EdgeVision PRIVATE
+target_link_libraries(EdgeVisionRuntime PUBLIC
     debug "${ONNXRT_ROOT}/lib/onnxruntime.lib"
     optimized "${ONNXRT_ROOT}/lib/onnxruntime.lib"
 )
@@ -368,10 +384,10 @@ add_custom_command(TARGET EdgeVision POST_BUILD
 # ============================================================
 # 第三方库配置 (spdlog, header-only)
 # ============================================================
-target_include_directories(EdgeVision PRIVATE
+target_include_directories(EdgeVisionRuntime PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/spdlog/include"
 )
-target_compile_definitions(EdgeVision PRIVATE SPDLOG_USE_STD_FORMAT)
+target_compile_definitions(EdgeVisionRuntime PUBLIC SPDLOG_USE_STD_FORMAT)
 
 # =========================
 # ZXing
@@ -379,11 +395,11 @@ target_compile_definitions(EdgeVision PRIVATE SPDLOG_USE_STD_FORMAT)
 
 set(ZXING_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/zxing")
 
-target_include_directories(EdgeVision PRIVATE
+target_include_directories(EdgeVisionRuntime PUBLIC
     "${ZXING_ROOT}/include"
 )
 
-target_link_libraries(EdgeVision PRIVATE
+target_link_libraries(EdgeVisionRuntime PUBLIC
     debug "${ZXING_ROOT}/lib/ZXingd.lib"
     optimized "${ZXING_ROOT}/release/lib/ZXing.lib"
 )
@@ -394,7 +410,7 @@ target_link_libraries(EdgeVision PRIVATE
 # ============================================================
 set(RAPIDOCR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/rapidocr")
 
-target_include_directories(EdgeVision PRIVATE
+target_include_directories(EdgeVisionRuntime PUBLIC
     "${RAPIDOCR_ROOT}/include"
 )
 
@@ -408,7 +424,7 @@ set(RAPIDOCR_SOURCES
     ${RAPIDOCR_ROOT}/src/clipper.cpp
 )
 
-target_sources(EdgeVision PRIVATE ${RAPIDOCR_SOURCES})
+target_sources(EdgeVisionRuntime PRIVATE ${RAPIDOCR_SOURCES})
 
 # 第三方代码禁用特定警告（含系统头文件中的警告）
 if(MSVC)
@@ -423,18 +439,18 @@ endif()
 # ============================================================
 set(PAHO_MQTT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/paho-mqtt")
 
-target_include_directories(EdgeVision PRIVATE
+target_include_directories(EdgeVisionRuntime PUBLIC
     "${PAHO_MQTT_ROOT}/include"
 )
 
 # 必须定义导入宏，否则 MSVC 无法解析 DLL 中的数据符号（如 mqtt::message::EMPTY_STR）
-target_compile_definitions(EdgeVision PRIVATE
+target_compile_definitions(EdgeVisionRuntime PUBLIC
     PAHO_MQTTPP_IMPORTS
     PAHO_MQTT_IMPORTS
 )
 
 # Paho MQTT C++ wrapper + C core
-target_link_libraries(EdgeVision PRIVATE
+target_link_libraries(EdgeVisionRuntime PUBLIC
     debug "${PAHO_MQTT_ROOT}/lib/paho-mqttpp3d.lib"
     optimized "${PAHO_MQTT_ROOT}/release/lib/paho-mqttpp3.lib"
     debug "${PAHO_MQTT_ROOT}/lib/paho-mqtt3asd.lib"
@@ -465,7 +481,7 @@ endif()
 # ============================================================
 if(MSVC)
     # 添加 MSVC 编译选项
-    target_compile_options(EdgeVision PRIVATE
+    target_compile_options(EdgeVisionRuntime PRIVATE
         /W3   # 警告级别 3
         /EHsc # 启用 C++ 异常处理
         /Zi   # 调试信息格式（Debug/RelWithDebInfo 下有用）
@@ -488,3 +504,19 @@ set_target_properties(EdgeVision PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
+
+# The executable and Qt interaction tests share the same production objects.
+target_link_libraries(EdgeVision PRIVATE EdgeVisionRuntime)
+option(EDGEVISION_UI_TESTS "Build production QWidget interaction regression tests" OFF)
+if(EDGEVISION_UI_TESTS)
+    enable_testing()
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    add_executable(ui_interaction_test tests/ui_interaction_test.cpp ${RESOURCES})
+    target_link_libraries(ui_interaction_test PRIVATE EdgeVisionRuntime Qt6::Test)
+    # Keep the test alongside the vendored runtime DLLs deployed for the app.
+    set_target_properties(ui_interaction_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_dependencies(ui_interaction_test EdgeVision)
+    add_test(NAME ui_interaction COMMAND ui_interaction_test -platform offscreen
+        -o "${CMAKE_BINARY_DIR}/ui-interaction-results.txt,txt")
+    set_tests_properties(ui_interaction PROPERTIES TIMEOUT 120)
+endif()

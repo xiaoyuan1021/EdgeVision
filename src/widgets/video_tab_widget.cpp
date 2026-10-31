@@ -1,4 +1,4 @@
-﻿#include "video_tab_widget.h"
+#include "video_tab_widget.h"
 #include "ui_video_tab.h"
 #include "logger.h"
 #include "roi_manager.h"
@@ -14,6 +14,12 @@ VideoTabWidget::VideoTabWidget(QWidget* parent)
     , m_isUpdatingProgress(false)
 {
     m_ui->setupUi(this);
+    connect(m_ui->btn_openFile, &QPushButton::clicked, this, &VideoTabWidget::onOpenFileClicked);
+    connect(m_ui->btn_openCamera, &QPushButton::clicked, this, &VideoTabWidget::onOpenCameraClicked);
+    connect(m_ui->btn_play, &QPushButton::clicked, this, &VideoTabWidget::onPlayClicked);
+    connect(m_ui->btn_pause, &QPushButton::clicked, this, &VideoTabWidget::onPauseClicked);
+    connect(m_ui->btn_stop, &QPushButton::clicked, this, &VideoTabWidget::onStopClicked);
+    connect(m_ui->slider_progress, &QSlider::valueChanged, this, &VideoTabWidget::onProgressChanged);
 
     // 连接视频管理器的信号
     connect(m_videoManager, &VideoManager::frameReady,
@@ -43,7 +49,7 @@ VideoTabWidget::~VideoTabWidget()
     delete m_ui;
 }
 
-void VideoTabWidget::on_btn_openFile_clicked()
+void VideoTabWidget::onOpenFileClicked()
 {
     spdlog::info(QString("========== 视频文件选择对话框 =========="));
     
@@ -73,7 +79,7 @@ void VideoTabWidget::on_btn_openFile_clicked()
     }
 }
 
-void VideoTabWidget::on_btn_openCamera_clicked()
+void VideoTabWidget::onOpenCameraClicked()
 {
     spdlog::info(QString("[VideoTab] 打开相机按钮被点击"));
     int currentIndex = m_ui->comboBox_camera->currentIndex();
@@ -96,28 +102,23 @@ void VideoTabWidget::on_btn_openCamera_clicked()
     }
 }
 
-void VideoTabWidget::on_btn_play_clicked()
+void VideoTabWidget::onPlayClicked()
 {
     m_videoManager->play();
 }
 
-void VideoTabWidget::on_btn_pause_clicked()
+void VideoTabWidget::onPauseClicked()
 {
     m_videoManager->pause();
 }
 
-void VideoTabWidget::on_btn_stop_clicked()
+void VideoTabWidget::onStopClicked()
 {
     m_videoManager->close();
 }
 
-void VideoTabWidget::on_comboBox_camera_currentIndexChanged(int index)
-{
-    // 相机选择改变时更新UI
-    Q_UNUSED(index);
-}
 
-void VideoTabWidget::on_slider_progress_valueChanged(int value)
+void VideoTabWidget::onProgressChanged(int value)
 {
     if (m_isUpdatingProgress) {
         return;
@@ -277,11 +278,12 @@ void VideoTabWidget::connectSignals(const SignalContext& ctx,
                                     std::function<void()> onExecutePipeline,
                                     std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onConfigSaved);
     connect(this, &VideoTabWidget::videoFrameReady,
             this, [rm = ctx.roiManager, view = ctx.view, onExecutePipeline](const cv::Mat& frame) {
                 if (!frame.empty()) {
-                    rm->setFullImage(frame);
+                    rm->setVideoFrame(frame);
                     view->clearRoi();
                     // 直接将视频帧显示到画布上
                     view->setImage(ImageUtils::matToQImage(frame));

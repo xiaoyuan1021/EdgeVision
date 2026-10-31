@@ -27,7 +27,7 @@ cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug ../..
 ninja
 ```
 
-Output: `build/Debug/bin/VisionTool.exe`
+Output: `build/Debug/bin/EdgeVision.exe`
 
 - CMake source files are **explicitly listed** in `CMakeLists.txt`. New `.cpp`/`.h` must be added to `SOURCES`/`HEADERS` lists.
 - All third-party libs are vendored in `3rdparty/` (OpenCV, ONNX Runtime, Paho MQTT, spdlog, ZXing, Tesseract). Do not use system-installed versions.
@@ -66,7 +66,7 @@ Entry point: `src/main.cpp` → `MainWindow`.
 
 1. Subclass `IPipelineStep` in `include/core/pipeline_steps.h`
 2. Implement `run()` in `src/core/pipeline_steps.cpp`
-3. Register in `PipelineManager::initPipeline()`
+3. Register in `WorkerPipeline` in `src/core/pipeline_executor.cpp`
 
 ## Adding a Detection Type
 
@@ -87,7 +87,9 @@ Config: `app_config.json` (edge), `cloud_dashboard/config.py` (cloud).
 
 ## Key Conventions
 
-- All tab widgets implement `ISignalConnectable` for decoupled signal wiring.
+- Tab widgets implement `ISignalConnectable` for external signal wiring, once per instance.
+- AUTOUIC disables auto-connection: use typed `connect`, never `on_object_signal` slots. `loadFromConfig` renders only, without writes or execution. See `docs/ui-interactions.md`.
+- Run `test-msvc.cmd` for core tests and `test-ui-msvc.cmd` for production QWidget regression tests.
 - `PipelineManager` runs async with mutex + atomic flags + value-swap data passing.
 - ROI coordinates are normalized (0–1) for resolution independence.
 - Pipeline steps are controlled by `stepEnabled` array and `stepOrder` in config.

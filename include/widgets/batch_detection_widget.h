@@ -95,9 +95,9 @@ private:
     QVector<BatchDetectionItem> m_results;
     int m_currentIndex = 0;
     bool m_running = false;
+    bool m_taskInFlight = false;
     bool m_paused = false;
     bool m_stopRequested = false;
-    QAtomicInt m_pauseFlag{0};
 
     // 当前使用的方案ID
     QString m_currentProfileId;

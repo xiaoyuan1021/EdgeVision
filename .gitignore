@@ -44,6 +44,8 @@ __pycache__/
 htmlcov/
 *.db
 docs/*
+!docs/refactoring-progress.md
+!docs/ui-interactions.md
 projects/*
 node_modules/*
 .omo/*

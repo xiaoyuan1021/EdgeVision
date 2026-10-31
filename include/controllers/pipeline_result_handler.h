@@ -8,7 +8,7 @@
 #include "roi_manager.h"
 #include "image_view.h"
 #include "data/detection_result_report.h"
-#include "algorithm/dnn_inference.h"
+#include "data/object_detection_result.h"
 
 class PipelineResultHandler : public QObject
 {
@@ -38,10 +38,6 @@ private:
     /// 通过 IResultUpdatable 接口分发结果（不再硬编码 Tab 名称）
     void distributeResults(const PipelineContext& result);
     
-    /// 目标检测特殊处理（不走 Pipeline，临时运行推理）
-    /// @param displayImage  渲染后的显示图像（检测结果绘制在此图上）
-    /// @param pipelineSource  Pipeline 实际处理的源图像（用于检测推理）
-    void handleObjectDetection(cv::Mat& displayImage, const cv::Mat& pipelineSource);
     void drawDetectionResults(cv::Mat& image, const std::vector<DetectionResult>& results);
 
     bool m_isVideoMode = false;  // 当前是否为视频处理模式

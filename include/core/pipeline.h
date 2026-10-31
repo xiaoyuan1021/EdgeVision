@@ -6,8 +6,10 @@
 #include <QPointF>
 #include <QString>
 #include <QRectF>
+#include <memory>
 #include "config/pipeline_config.h"
 #include "data/barcode_result.h"
+#include "data/object_detection_result.h"
 #include "data/ocr_region.h"
 #include "region_feature.h"
 #include "display_config.h"
@@ -26,7 +28,7 @@
 struct PipelineContext
 {
     // ========== 输入（execute时设置）==========
-    const PipelineConfig* config = nullptr;  ///< 配置指针（指向调用方传入的config副本）
+    std::shared_ptr<const PipelineConfig> config; ///< Owned immutable task snapshot
     cv::Mat srcBgr;                          ///< 原图(3通道)，即ROI裁剪后的图像
 
     // ========== 图像处理流水线（各步骤按顺序填充）==========
@@ -58,12 +60,8 @@ struct PipelineContext
     QVector<OcrRegion> ocrRegions;
 
     // 目标检测
-    struct DetectionResult {
-        QString label;
-        float confidence;
-        QRectF bbox;
-    };
-    QVector<DetectionResult> objectDetectionResults;
+    std::vector<DetectionResult> objectDetectionResults;
+    bool objectDetectionExecuted = false;
 
     // ========== 可视化输出 ==========
     cv::Mat visualBase;       ///< 当前Tab应显示的图像

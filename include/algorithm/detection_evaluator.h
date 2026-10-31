@@ -4,6 +4,7 @@
 #include "config/detection_config_types.h"
 #include "core/pipeline.h"
 #include "data/roi_detection_result.h"
+#include <functional>
 
 /**
  * 检测项评估器
@@ -13,38 +14,39 @@
  *
  * 使用方式：
  *   RoiDetectionResult result = DetectionEvaluator::evaluateRoi(
- *       roiConfig, ctx, roiImage, tabMgrPtr);
+ *       roiConfig, ctx, roiImage, detect);
  */
 class DetectionEvaluator
 {
 public:
+    using Detect = std::function<std::vector<DetectionResult>(const cv::Mat&, const ObjectDetectionConfig&)>;
     /**
      * 评估单个检测项
      * @param detItem 检测项配置
      * @param ctx Pipeline执行结果（单ROI）
      * @param roiImage ROI裁剪图像（目标检测需要）
-     * @param tabMgr TabManager指针（目标检测需要，可为nullptr）
+     * @param detect 独立推理函数，接收图像和检测项参数快照
      * @return 检测项评估结果
      */
     static DetectionItemResult evaluateItem(
         const DetectionItem& detItem,
         const PipelineContext& ctx,
         const cv::Mat& roiImage,
-        void* tabMgr = nullptr);
+        const Detect& detect);
 
     /**
      * 评估一个ROI的所有检测项，构建完整的RoiDetectionResult
      * @param roiConfig ROI配置（含检测项列表）
      * @param ctx Pipeline执行结果（单ROI）
      * @param roiImage ROI裁剪图像
-     * @param tabMgr TabManager指针（可为nullptr）
+     * @param detect 独立推理函数
      * @return ROI级别的检测结果
      */
     static RoiDetectionResult evaluateRoi(
         const RoiConfig& roiConfig,
         const PipelineContext& ctx,
         const cv::Mat& roiImage,
-        void* tabMgr = nullptr);
+        const Detect& detect);
 
 private:
     static DetectionItemResult evaluateBlob(
@@ -62,7 +64,7 @@ private:
     static DetectionItemResult evaluateObjectDetection(
         const DetectionItem& detItem,
         const cv::Mat& roiImage,
-        void* tabMgr);
+        const Detect& detect);
 
     static DetectionItemResult evaluateOcr(
         const DetectionItem& detItem,

@@ -170,6 +170,7 @@ private:
     QStatusBar* m_statusBar;
     QTreeWidget* m_treeView;
     QString m_currentSelectedRoiId;
+    QString m_currentSelectedDetectionId;
     RoiDetectionConfigController* m_detectionConfigController = nullptr;
 };
 

@@ -8,13 +8,11 @@
 #include <QPushButton>
 #include <QStatusBar>
 #include <QLabel>
-#include "core/pipeline_manager.h"
 #include "core/pipeline.h"
 #include "roi_manager.h"
 #include "data/detection_result_report.h"
 
 // 前向声明
-class TabManager;
 
 /**
  * 检测统计信息
@@ -86,14 +84,10 @@ class AutoDetectionController : public QObject
 
 public:
     explicit AutoDetectionController(
-        PipelineManager* pipeline,
         RoiManager* roiManager,
         QObject* parent = nullptr);
 
     ~AutoDetectionController() = default;
-
-    /// 设置TabManager引用（用于目标检测Tab访问）
-    void setTabManager(TabManager* tabManager) { m_tabManager = tabManager; }
 
     // ==================== 控制接口 ====================
 
@@ -166,13 +160,12 @@ private:
     /// 完成检测
     void finishDetection();
 
-    QPointer<PipelineManager> m_pipeline;
     RoiManager* m_roiManager;
-    TabManager* m_tabManager = nullptr;
 
     QList<ImageDetectionTask> m_tasks;    ///< 待检测任务列表
     int m_currentIndex = 0;
     bool m_running = false;
+    bool m_taskInFlight = false;
     bool m_paused = false;
     bool m_stopRequested = false;
 

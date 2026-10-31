@@ -20,7 +20,7 @@ class ImageProcessor;
  * 线程模型：
  * - execute() 在后台线程调用，使用局部 PipelineContext，不共享可变状态
  * - m_config 仅在UI线程读写，无需加锁
- * - m_lastContext 由 m_contextMutex 保护，供UI线程读取上次结果
+ * - Only accepted interactive results update m_lastContext; batch runs return values.
  */
 class PipelineManager : public QObject, public IPipelineAccess
 {
@@ -47,7 +47,6 @@ public:
     // 设置配置（仅UI线程调用）
     void setConfig(const PipelineConfig& config) override {
         m_config = config;
-        m_algorithmQueue = config.algorithmQueue;
     }
 
     /// 批量修改配置（推荐方式）
@@ -72,11 +71,11 @@ public:
     void removeAlgorithmStep(int index) override;
     void swapAlgorithmStep(int index1,int index2) override;
     void clearAlgorithmQueue();
-    const QVector<AlgorithmStep>& getAlgorithmQueue() const override { return m_algorithmQueue; }
+    const QVector<AlgorithmStep>& getAlgorithmQueue() const override { return m_config.algorithmQueue; }
 
     // ========== Pipeline执行 ==========
 
-    // 执行Pipeline处理（可在后台线程调用）
+    // Execute a task snapshot without changing manager/UI state.
     // 输入：BGR图像 + 配置（步骤通过 ctx.config 读取）
     // 返回：处理结果上下文
     PipelineContext execute(const cv::Mat& inputImage, const PipelineConfig& config);
@@ -87,7 +86,13 @@ public:
         return m_lastContext;
     }
 
-    double lastExecMs() const { return m_lastExecMs; }
+    double lastExecMs() const { QMutexLocker lock(&m_contextMutex); return m_lastExecMs; }
+
+    // UI thread: publish only a result accepted by the display controller.
+    void acceptResult(const PipelineResult& result);
+    quint64 displayGeneration() const { return m_displayGeneration; }
+    void expectRequest(qint64 id) { m_expectedRequestId = id; }
+    bool isCurrentResult(const PipelineResult& result, bool streaming = false) const;
 
     void updateAlgorithmStep(int index, const AlgorithmStep& step) override;
 
@@ -144,29 +149,14 @@ signals:
     void asyncFinished(const PipelineResult& result);
 
 private:
-    void initPipeline();
-
-private:
-    // 互斥锁：保护 m_lastContext（UI线程读取，execute写入）
+    // Protect accepted display results and timing.
     mutable QMutex m_contextMutex;
 
     // 配置（仅在UI线程读写，不需要锁保护）
     PipelineConfig m_config;
 
-    // 原子标志：后台Pipeline是否正在运行（仅用于reset安全）
-    QAtomicInt m_pipelineRunning{0};
-
-    // 延迟重置标志（execute正在执行时，UI线程请求reset暂存于此）
-    QAtomicInt m_hasPendingReset{0};
-
-    // Pipeline实例
-    Pipeline m_pipeline;
-
-    // 算法队列
-    QVector<AlgorithmStep> m_algorithmQueue;
-
-    // 图像处理器
-    std::unique_ptr<ImageProcessor> m_processor;
+    quint64 m_displayGeneration = 0;
+    qint64 m_expectedRequestId = -1;
 
     // 最后执行结果
     PipelineContext m_lastContext;

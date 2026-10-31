@@ -32,7 +32,7 @@ def test_recent_limits(client, state, path):
 
 def test_history_parameter_mapping(client, api, monkeypatch):
     query = Mock(return_value={"items": [], "total": 0})
-    monkeypatch.setattr(api, "db_query_history", query)
+    monkeypatch.setattr(api.runtime.database, "db_query_history", query)
     response = client.get("/api/results/history?device=edge&roi=part&passed=false&days=3&page=2&page_size=999")
     assert response.status_code == 200
     query.assert_called_once_with("edge", "part", False, 3, 2, 200)
@@ -46,12 +46,12 @@ def test_command_disconnected(client):
 def test_command_publish(client, api, state, monkeypatch, command):
     mqtt = Mock()
     state.update(mqtt_connected=True, mqtt_client=mqtt)
-    monkeypatch.setattr(api, "now_ts", lambda: 12345)
+    monkeypatch.setattr(api.runtime, "clock", lambda: 12.345)
     response = client.post("/api/command", json={"cmd": command})
     assert response.status_code == 200
     assert response.json == {"ok": True, "cmd": command}
     args, kwargs = mqtt.publish.call_args
-    assert args[0] == api.MQTT_CONFIG["topics"]["commands"]
+    assert args[0] == api.runtime.mqtt_config["topics"]["commands"]
     assert json.loads(args[1]) == {"cmd": command, "ts": 12345}
     assert kwargs == {"qos": 1}
 
@@ -93,7 +93,7 @@ def test_invalid_limit(client, path, query):
                                   "days=-1", "page=bad", "passed=bad"])
 def test_invalid_history_parameters(client, api, monkeypatch, query):
     query_db = Mock()
-    monkeypatch.setattr(api, "db_query_history", query_db)
+    monkeypatch.setattr(api.runtime.database, "db_query_history", query_db)
     assert client.get("/api/results/history?" + query).status_code == 400
     query_db.assert_not_called()
 

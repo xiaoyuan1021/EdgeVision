@@ -29,7 +29,14 @@ public:
     );
 
     /// 获取当前选中的ROI ID（由外部设置）
-    void setCurrentRoiId(const QString& roiId) { m_currentRoiId = roiId; }
+    void setCurrentRoiId(const QString& roiId) {
+        if (m_currentRoiId != roiId) m_currentDetectionId.clear();
+        m_currentRoiId = roiId;
+    }
+    void setSelection(const QString& roiId, const QString& detectionId) {
+        m_currentRoiId = roiId;
+        m_currentDetectionId = detectionId;
+    }
     QString currentRoiId() const { return m_currentRoiId; }
 
     /// 更新当前选中ROI的 Blob 检测项判定阈值（由 JudgeTab 触发）
@@ -48,6 +55,8 @@ public:
     void updateLineDetectionConfig(const LineDetectConfig& lineConfig);
 
 private:
+    DetectionItem* selectedItem(DetectionType type);
     RoiManager& m_roiManager;
     QString m_currentRoiId;
+    QString m_currentDetectionId;
 };

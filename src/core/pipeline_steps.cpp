@@ -174,7 +174,7 @@ spdlog::error("StepFilter 异常: {}", e.what());
 
 void StepAlgorithmQueue::run(PipelineContext& ctx)
     {
-        if (!m_processor || !m_algorithmQueue || m_algorithmQueue->isEmpty())
+        if (!m_processor || !ctx.config || ctx.config->algorithmQueue.isEmpty())
         {
             return;
         }
@@ -205,13 +205,13 @@ void StepAlgorithmQueue::run(PipelineContext& ctx)
 
             if (input.empty()) return;
 
-            cv::Mat result = m_processor->executeAlgorithmQueue(input, *m_algorithmQueue);
+            cv::Mat result = m_processor->executeAlgorithmQueue(input, ctx.config->algorithmQueue);
 
             if (!result.empty())
             {
                 ctx.extractedMask = result;
                 ctx.reason = QString("算法队列执行完成 (%1个步骤)")
-                                 .arg(m_algorithmQueue->size());
+                                 .arg(ctx.config->algorithmQueue.size());
             }
         } catch (const cv::Exception& ex) {
 spdlog::error("AlgorithmQueue OpenCV错误: {}", ex.what());
@@ -376,23 +376,41 @@ static void detectLinesLSD(const cv::Mat& src, std::vector<cv::Vec4f>& lines)
 {
     if (src.empty()) return;
     try {
+        // 大图预缩放加速：LSD 对全分辨率大图很慢，缩到 800px 宽度以内再检测
+        cv::Mat work = src;
+        cv::Mat resized;
+        constexpr int kMaxDim = 800;
+        int maxSide = std::max(src.cols, src.rows);
+        if (maxSide > kMaxDim) {
+            double scale = (double)kMaxDim / maxSide;
+            cv::resize(src, resized, cv::Size(), scale, scale, cv::INTER_AREA);
+            work = resized;
+        }
+
         auto LSDDetector = cv::line_descriptor::LSDDetector::createLSDDetector();
         std::vector<cv::line_descriptor::KeyLine> keylines;
-        LSDDetector->detect(src, keylines, 2, 1);
-        spdlog::debug("[LSD] 检测到 {} 条直线", keylines.size());
+        LSDDetector->detect(work, keylines, 2, 1);
+        spdlog::debug("[LSD] 检测到 {} 条直线 (输入 {}x{})", keylines.size(), work.cols, work.rows);
+
+        float sx = (work.cols == src.cols) ? 1.0f : (float)src.cols / work.cols;
+        float sy = (work.rows == src.rows) ? 1.0f : (float)src.rows / work.rows;
         for (const auto& kl : keylines)
         {
             cv::Point2f p1 = kl.getStartPoint();
             cv::Point2f p2 = kl.getEndPoint();
+            if (sx != 1.0f || sy != 1.0f) {
+                p1.x *= sx; p1.y *= sy;
+                p2.x *= sx; p2.y *= sy;
+            }
             if (p1 != p2) {
                 lines.push_back(cv::Vec4f(p1.x, p1.y, p2.x, p2.y));
             }
         }
     } catch (const cv::Exception& ex) {
-spdlog::error("LSD OpenCV错误: {}", ex.what());
+        spdlog::error("LSD OpenCV错误: {}", ex.what());
     } catch (...) {
         spdlog::info("[LSD] 未知异常");
-    spdlog::error("LSD 未知异常");
+        spdlog::error("LSD 未知异常");
     }
 }
 
@@ -509,15 +527,50 @@ static void detectLinesEDlines(const cv::Mat& src, std::vector<cv::Vec4f>& lines
 {
     if (src.empty()) return;
     try {
+        // [BUG WORKAROUND] EDLine (opencv_contrib line_descriptor) 存在已知 bug:
+        // EdgeDrawing() 中缓冲区按 pixelNum/5 分配，但写入时不检查边界，
+        // 越界后才检测并 return -1，但堆已被破坏 (opencv_contrib#1999)。
+        // 修复: 预估边像素密度，超限时缩图，确保边像素数 < edgePixelArraySize。
+        cv::Mat work = src;
+        const int pixelNum = src.cols * src.rows;
+        const int edgePixelBudget = pixelNum / 5;  // 库内部缓冲区大小
+
+        // 用轻量 Canny 预估边像素数量（仅采样中间 1/4 区域，避免全图开销）
+        int estimatedEdges = 0;
+        {
+            cv::Mat roi(src, cv::Rect(src.cols / 4, src.rows / 4,
+                                      src.cols / 2, src.rows / 2));
+            cv::Mat canny;
+            cv::Canny(roi, canny, 50, 150);
+            estimatedEdges = cv::countNonZero(canny) * 4;  // 推算全图
+        }
+
+        if (estimatedEdges > edgePixelBudget) {
+            double scale = std::sqrt((double)edgePixelBudget / estimatedEdges) * 0.9;
+            scale = std::max(scale, 0.25);  // 不缩得太小
+            cv::Mat resized;
+            cv::resize(src, resized, cv::Size(), scale, scale, cv::INTER_AREA);
+            work = resized;
+            spdlog::debug("[EDlines] 边像素 {} 超过预算 {}，缩放至 {}x{}",
+                          estimatedEdges, edgePixelBudget, work.cols, work.rows);
+        }
+
         auto edDetector = cv::line_descriptor::BinaryDescriptor::createBinaryDescriptor();
         std::vector<cv::line_descriptor::KeyLine> keylines;
-        edDetector->detect(src, keylines);
+        edDetector->detect(work, keylines);
         spdlog::debug("[EDlines] 检测到 {} 条直线", keylines.size());
 
+        // 如果做了缩放，把坐标映射回原图
+        float sx = (work.cols == src.cols) ? 1.0f : (float)src.cols / work.cols;
+        float sy = (work.rows == src.rows) ? 1.0f : (float)src.rows / work.rows;
         for (const auto& kl : keylines)
         {
             cv::Point2f p1 = kl.getStartPoint();
             cv::Point2f p2 = kl.getEndPoint();
+            if (sx != 1.0f || sy != 1.0f) {
+                p1.x *= sx; p1.y *= sy;
+                p2.x *= sx; p2.y *= sy;
+            }
             if (p1 != p2) {
                 lines.push_back(cv::Vec4f(p1.x, p1.y, p2.x, p2.y));
             }
@@ -565,7 +618,7 @@ void StepLineDetector::runLineDetect(PipelineContext& ctx)
         std::vector<cv::Vec4f> lines;
 
         if (ctx.config->lineDetect.algorithm == 0) {
-            detectLinesHoughP(edges, ctx.config, lines);
+            detectLinesHoughP(edges, ctx.config.get(), lines);
         } else if (ctx.config->lineDetect.algorithm == 1) {
             detectLinesLSD(srcGray, lines);
             // LSD输出短线段，合并共线段并拟合
@@ -721,14 +774,14 @@ void StepLineDetector::runReferenceLineMatch(PipelineContext& ctx)
         std::vector<cv::Vec4f> allLines;
 
         if (ctx.config->lineDetect.algorithm == 0) {
-            detectLinesHoughP(edges, ctx.config, allLines);
+            detectLinesHoughP(edges, ctx.config.get(), allLines);
         } else if (ctx.config->lineDetect.algorithm == 1) {
             detectLinesLSD(maskedGray, allLines);
         } else if (ctx.config->lineDetect.algorithm == 2) {
             detectLinesEDlines(maskedGray, allLines);
         }
 
-        double refAngle = calculateReferenceLineAngle(ctx.config);
+        double refAngle = calculateReferenceLineAngle(ctx.config.get());
 
         std::vector<cv::Vec4f> matchedLines;
         for (const auto& line : allLines) {

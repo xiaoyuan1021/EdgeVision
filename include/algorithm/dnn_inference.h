@@ -6,16 +6,7 @@
 #include <vector>
 #include <string>
 
-/**
- * 单个检测结果
- */
-struct DetectionResult
-{
-    cv::Rect box;           // 检测框
-    float confidence;       // 置信度
-    int classId;            // 类别ID
-    std::string className;  // 类别名称
-};
+#include "data/object_detection_result.h"
 
 /**
  * DNN推理封装类 - 基于OpenCV DNN模块的深度学习推理

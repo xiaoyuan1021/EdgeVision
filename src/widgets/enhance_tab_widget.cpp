@@ -14,6 +14,9 @@ EnhanceTabWidget::EnhanceTabWidget(IPipelineAccess* pipelineAccess, QWidget* par
     , m_pipeline(pipelineAccess)
 {
     m_ui->setupUi(this);
+    connect(m_ui->btn_resetBC, &QPushButton::clicked, this, &EnhanceTabWidget::onResetClicked);
+    connect(m_ui->btn_saveBC, &QPushButton::clicked, this, &EnhanceTabWidget::onSaveClicked);
+    connect(m_ui->btn_undoBC, &QPushButton::clicked, this, &EnhanceTabWidget::onUndoClicked);
 
     // 设置 slider 和 spinbox 的范围、步长和默认值
     m_ui->Slider_brightness->setRange(-100, 100);
@@ -62,36 +65,27 @@ EnhanceTabWidget::EnhanceTabWidget(IPipelineAccess* pipelineAccess, QWidget* par
 void EnhanceTabWidget::onSliderChanged()
 {
     syncConfigToPipeline();
+    updateUndoUi();
     previewEnhance();
 }
 
-void EnhanceTabWidget::on_btn_resetBC_clicked()
+void EnhanceTabWidget::onResetClicked()
 {
     if (!m_pipeline) return;
-    m_ui->Slider_brightness->setValue(0);
-    m_ui->Slider_contrast->setValue(100);
-    m_ui->Slider_gamma->setValue(100);
-    m_ui->Slider_sharpen->setValue(100);
-    m_ui->checkBox_clahe->setChecked(false);
-    m_ui->Slider_claheClip->setValue(40);
-    m_ui->Slider_claheGrid->setValue(8);
-    m_pipeline->resetConfigToDefaults();
-
-    EnhancementState snapshot = captureState();
-    m_enhancementHistory.clear();
-    m_enhancementHistory.push(snapshot);
+    EnhancementState defaults;
+    applyState(defaults);
     updateUndoUi();
-    applyState(snapshot);
+
 }
 
-void EnhanceTabWidget::on_btn_saveBC_clicked()
+void EnhanceTabWidget::onSaveClicked()
 {
     EnhancementState current = captureState();
     pushSnapshot(current);
     syncConfigToPipeline();
 }
 
-void EnhanceTabWidget::on_btn_undoBC_clicked()
+void EnhanceTabWidget::onUndoClicked()
 {
     if (m_enhancementHistory.isEmpty())
         return;
@@ -128,45 +122,11 @@ EnhanceTabWidget::EnhancementState EnhanceTabWidget::captureState() const
 
 void EnhanceTabWidget::applyState(const EnhancementState &state)
 {
-    const QSignalBlocker b1(m_ui->Slider_brightness);
-    const QSignalBlocker b2(m_ui->Slider_contrast);
-    const QSignalBlocker b3(m_ui->Slider_gamma);
-    const QSignalBlocker b4(m_ui->Slider_sharpen);
-    const QSignalBlocker b5(m_ui->Slider_claheClip);
-    const QSignalBlocker b6(m_ui->Slider_claheGrid);
-    const QSignalBlocker cb1(m_ui->checkBox_clahe);
-    const QSignalBlocker sb1(m_ui->spinBox_brightness);
-    const QSignalBlocker sb2(m_ui->spinBox_contrast);
-    const QSignalBlocker sb3(m_ui->spinBox_gamma);
-    const QSignalBlocker sb4(m_ui->spinBox_sharpen);
-
-    m_ui->Slider_brightness->setValue(state.brightness);
-    m_ui->Slider_contrast->setValue(state.contrast);
-    m_ui->Slider_gamma->setValue(state.gamma);
-    m_ui->Slider_sharpen->setValue(state.sharpen);
-    m_ui->checkBox_clahe->setChecked(state.claheEnabled);
-    m_ui->Slider_claheClip->setValue(state.claheClipLimit);
-    m_ui->Slider_claheGrid->setValue(state.claheGridSize);
-
-    m_ui->spinBox_brightness->setValue(state.brightness);
-    m_ui->spinBox_contrast->setValue(state.contrast);
-    m_ui->spinBox_gamma->setValue(state.gamma);
-    m_ui->spinBox_sharpen->setValue(state.sharpen);
-
-    // 同步参数到 Pipeline（线程安全：使用快照+setConfig模式）
-    {
-        PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-        cfg.enhance.brightness = state.brightness;
-        cfg.enhance.contrast = state.contrast;
-        cfg.enhance.gamma = state.gamma;
-        cfg.enhance.sharpen = state.sharpen;
-        cfg.enhance.claheEnabled = state.claheEnabled;
-        cfg.enhance.claheClipLimit = state.claheClipLimit;
-        cfg.enhance.claheGridSize = state.claheGridSize;
-        m_pipeline->setConfig(cfg);
-    }
-
+    applyStateQuiet(state);
+    syncConfigToPipeline();
+    updateUndoUi();
     emit processRequested();
+
 }
 
 void EnhanceTabWidget::pushSnapshot(const EnhancementState &state)
@@ -181,7 +141,8 @@ void EnhanceTabWidget::pushSnapshot(const EnhancementState &state)
 void EnhanceTabWidget::updateUndoUi()
 {
     bool hasSnapshot = !m_enhancementHistory.isEmpty();
-    bool canStepBack = m_enhancementHistory.size() > 1;
+    bool canStepBack = m_enhancementHistory.size() > 1
+        || (hasSnapshot && !(captureState() == m_enhancementHistory.top()));
     m_ui->btn_undoBC->setEnabled(hasSnapshot && canStepBack);
 }
 
@@ -284,6 +245,9 @@ void EnhanceTabWidget::setEnhanceConfig(int brightness, int contrast, int gamma,
     state.claheClipLimit = claheClipLimit;
     state.claheGridSize = claheGridSize;
     applyStateQuiet(state);
+    m_enhancementHistory.clear();
+    m_enhancementHistory.push(captureState());
+    updateUndoUi();
 }
 
 void EnhanceTabWidget::applyStateQuiet(const EnhancementState &state)
@@ -314,22 +278,14 @@ void EnhanceTabWidget::applyStateQuiet(const EnhancementState &state)
     m_ui->spinBox_gamma->setValue(state.gamma);
     m_ui->spinBox_sharpen->setValue(state.sharpen);
 
-    // 仅同步参数到Pipeline，不触发处理
-    PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-    cfg.enhance.brightness = state.brightness;
-    cfg.enhance.contrast = state.contrast;
-    cfg.enhance.gamma = state.gamma;
-    cfg.enhance.sharpen = state.sharpen;
-    cfg.enhance.claheEnabled = state.claheEnabled;
-    cfg.enhance.claheClipLimit = state.claheClipLimit;
-    cfg.enhance.claheGridSize = state.claheGridSize;
-    m_pipeline->setConfig(cfg);
+
 }
 
 void EnhanceTabWidget::connectSignals(const SignalContext& ctx,
                                       std::function<void()> onExecutePipeline,
                                       std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onConfigSaved);
     m_view = ctx.view;
     m_roiManager = ctx.roiManager;

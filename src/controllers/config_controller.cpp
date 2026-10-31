@@ -1,4 +1,4 @@
-﻿#include "controllers/config_controller.h"
+#include "controllers/config_controller.h"
 #include "widgets/i_tab_interfaces.h"
 #include "logger.h"
 #include "utils/path_utils.h"
@@ -80,6 +80,8 @@ void ConfigController::loadConfig(QWidget* parentWidget)
 
 void ConfigController::collectConfigFromUI(AppConfig& config)
 {
+    // Lazily created tabs only overwrite fields they own; preserve all others.
+    config.pipelineConfig = m_pipelineManager->getConfigSnapshot();
     // 通过 IConfigurableTab 接口收集所有已注册 Tab 的配置到 PipelineConfig
     for (auto* tab : m_configurableTabs) {
         tab->saveToConfig(config.pipelineConfig);
@@ -186,24 +188,11 @@ void ConfigController::applyConfigToUI(const AppConfig& config)
         spdlog::info("已恢复多图片ROI配置");
     }
 
-    // ====== 第四步：通过 IConfigurableTab 接口将配置应用到所有已注册 Tab ======
-    for (auto* tab : m_configurableTabs) {
-        tab->loadFromConfig(config.pipelineConfig);
-    }
-
-    // ====== 第五步：应用算法队列到 PipelineManager ======
-    m_pipelineManager->clearAlgorithmQueue();
-    for (const auto& step : config.algorithmQueue) {
-        m_pipelineManager->addAlgorithmStep(step);
-    }
-
-    // 同步Pipeline中的提取配置
-    m_pipelineManager->updateConfig([&](PipelineConfig& cfg) {
-        cfg.shapeFilter = config.pipelineConfig.shapeFilter;
-    });
-
-    // 应用 PipelineConfig 到 PipelineManager（不含 algorithmQueue）
-    m_pipelineManager->setConfig(config.pipelineConfig);
+    PipelineConfig restored = config.pipelineConfig;
+    restored.algorithmQueue = config.algorithmQueue;
+    m_pipelineManager->setConfig(restored);
+    m_pipelineManager->clearLastResult();
+    for (auto* tab : m_configurableTabs) tab->loadFromConfig(restored);
 
     // 发出配置已应用信号
     emit configApplied();

@@ -77,18 +77,41 @@ IPipelineStep* Pipeline::getStep(int index)
 
 void Pipeline::run(PipelineContext& ctx)
 {
+    const auto runStep = [&ctx](IPipelineStep& step) {
+        try {
+            step.run(ctx);
+        } catch (const std::exception& ex) {
+            ctx.pass = false;
+            ctx.reason = QString("Pipeline step failed: %1").arg(ex.what());
+        } catch (...) {
+            ctx.pass = false;
+            ctx.reason = "Pipeline step failed: unknown exception";
+        }
+    };
     if (steps_.empty()) {
         spdlog::info("[Pipeline] 警告：没有步骤可执行");
         return;
     }
 
-    for (size_t i = 0; i < steps_.size(); ++i) {
-        auto& step = steps_[i];
-        if (step) {
-            if (ctx.config && !ctx.config->stepEnabled[static_cast<int>(step->stepType())]) {
-                continue;
-            }
-            step->run(ctx);
+    if (!ctx.config) {
+        for (auto& step : steps_) {
+            runStep(*step);
+            if (!ctx.pass) break;
         }
+        return;
+    }
+    // Resolve by type, not container position: order belongs to this task.
+    std::array<bool, PipelineConfig::STEP_COUNT> visited{};
+    for (int type : ctx.config->stepOrder) {
+        if (type < 0 || type >= PipelineConfig::STEP_COUNT || visited[type]) continue;
+        visited[type] = true;
+        if (!ctx.config->stepEnabled[type]) continue;
+        for (auto& step : steps_) {
+            if (static_cast<int>(step->stepType()) == type) {
+                runStep(*step);
+                break;
+            }
+        }
+        if (!ctx.pass) break;
     }
 }

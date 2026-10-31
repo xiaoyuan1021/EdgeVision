@@ -1,11 +1,11 @@
-﻿#include "controllers/auto_detection_controller.h"
+#include "core/pipeline_executor.h"
+#include "algorithm/object_detection_service.h"
+#include "controllers/auto_detection_controller.h"
 #include "logger.h"
 #include "utils/path_utils.h"
 #include "config/detection_config_types.h"
 #include "algorithm/image_utils.h"
 #include "algorithm/detection_evaluator.h"
-#include "widgets/object_detection_tab_widget.h"
-#include "widgets/tab_manager.h"
 #include "data/roi_detection_result.h"
 #include <QFileInfo>
 #include <QCoreApplication>
@@ -13,11 +13,9 @@
 #include <QFutureWatcher>
 
 AutoDetectionController::AutoDetectionController(
-    PipelineManager* pipeline,
     RoiManager* roiManager,
     QObject* parent)
     : QObject(parent)
-    , m_pipeline(pipeline)
     , m_roiManager(roiManager)
 {
 }
@@ -68,6 +66,7 @@ void AutoDetectionController::stopDetection()
     m_stopRequested = true;
     m_paused = false;
     emit logMessage("正在停止检测...");
+    processNextTask();
 }
 
 void AutoDetectionController::pauseDetection()
@@ -138,6 +137,8 @@ QList<ImageDetectionTask> AutoDetectionController::buildTaskList()
 
 void AutoDetectionController::processNextTask()
 {
+    // Resume/stop may arrive while a watcher is still processing this image.
+    if (!m_running || m_taskInFlight) return;
     // 检查是否需要停止
     if (m_stopRequested) {
         finishDetection();
@@ -162,8 +163,6 @@ void AutoDetectionController::processNextTask()
 void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
 {
     // 捕获需要的指针和数据（按值），避免在后台线程中捕获 this
-    QPointer<PipelineManager> pipelinePtr = m_pipeline;
-    TabManager* tabMgrPtr = m_tabManager;
     QList<RoiConfig> roiConfigs = task.roiConfigs;  // 值拷贝，线程安全
     QString imagePath = task.imagePath;
     QString imageName = task.imageName;
@@ -174,14 +173,15 @@ void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
     // 如果imagePath为空，从RoiManager内存中预先获取图像（lambda中无法访问this）
     cv::Mat image;
     if (imagePath.isEmpty() && m_roiManager) {
-        image = m_roiManager->getImage(imageId);
+        image = m_roiManager->getImage(imageId).clone();
         spdlog::debug(QString("[检测] 从内存预加载图像: %1 (空=%2)").arg(imageId, image.empty() ? "是" : "否"));
     }
 
     // 使用 QtConcurrent 在后台线程执行，避免阻塞 UI
     // 注意：lambda中无法使用emit logMessage（无this指针），使用Logger::instance()代替
+    m_taskInFlight = true;
     QFuture<ImageDetectionResult> future = QtConcurrent::run(
-        [pipelinePtr, tabMgrPtr, imagePath, imageName, imageId, roiConfigs, image]() -> ImageDetectionResult {
+        [imagePath, imageName, imageId, roiConfigs, image]() -> ImageDetectionResult {
             // 创建图片级别的检测结果
             ImageDetectionResult imageResult;
             imageResult.imageId = imageId;
@@ -189,14 +189,6 @@ void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
             imageResult.imagePath = imagePath;
 
             try {
-            // 【P0修复】检查PipelineManager是否已被释放
-            if (!pipelinePtr) {
-                spdlog::error(QString("[检测] PipelineManager已被释放，跳过处理: %1").arg(imagePath));
-                imageResult.passed = false;
-                imageResult.failReason = QString("PipelineManager已被释放: %1").arg(imagePath);
-                return imageResult;
-            }
-
             spdlog::debug(QString("[检测] 开始处理图片: %1 (路径: %2)").arg(imageId, imagePath));
 
             cv::Mat finalImage = image;  // 使用预加载的图像
@@ -219,11 +211,11 @@ void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
                 cv::Rect r = ImageUtils::mapRoiToCvRect(roiConfig.roiRect, finalImage.cols, finalImage.rows);
                 cv::Mat roiImage = r.empty() ? finalImage.clone() : finalImage(r).clone();
 
-                PipelineContext ctx = pipelinePtr->execute(roiImage, roiConfig.pipelineConfig);
+                PipelineContext ctx = PipelineExecutor::preprocess(roiImage, roiConfig.pipelineConfig);
 
                 // [NOTE] 使用DetectionEvaluator评估该ROI的所有检测项
                 RoiDetectionResult roiResult = DetectionEvaluator::evaluateRoi(
-                    roiConfig, ctx, roiImage, tabMgrPtr);
+                    roiConfig, ctx, roiImage, ObjectDetectionService::detect);
                 roiResult.imageId = imageId;
 
                 imageResult.addRoiResult(roiResult);
@@ -307,6 +299,7 @@ void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
 
             // 处理下一个任务
             m_currentIndex++;
+            m_taskInFlight = false;
             processNextTask();
         }
     );

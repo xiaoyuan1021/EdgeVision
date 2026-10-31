@@ -36,6 +36,7 @@ struct SignalContext {
     RoiManager* roiManager;
     ImageView* view;
     RoiUiController* roiCtrl;
+    std::function<void(const BarcodeConfig&)> saveBarcodeDraft;
 };
 
 /**
@@ -52,6 +53,15 @@ public:
     virtual void connectSignals(const SignalContext& ctx,
                                 std::function<void()> onExecutePipeline,
                                 std::function<void()> onConfigSaved = nullptr) = 0;
+protected:
+    // TabManager wires each instance once; repeated setup must not multiply actions.
+    bool beginSignalConnections() {
+        if (m_signalsConnected) return false;
+        m_signalsConnected = true;
+        return true;
+    }
+private:
+    bool m_signalsConnected = false;
 };
 
 // ============================================================

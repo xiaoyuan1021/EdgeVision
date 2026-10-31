@@ -30,7 +30,7 @@ def test_heartbeat_reconnect_preserves_results(handler, state):
     assert state["devices"]["edge"]["status"] == "online"
     assert state["devices"]["edge"]["result_count"] == 4
     assert state["devices"]["edge"]["uptime"] == 20
-    assert mqtt_handler.db_insert_heartbeat.call_count == 2
+    assert handler.database.db_insert_heartbeat.call_count == 2
 
 
 @pytest.mark.parametrize("passed", [True, False])
@@ -46,7 +46,7 @@ def test_result_stats_and_duplicate(handler, state, passed):
     assert state["stats"]["today"] == 1
     assert state["stats"]["by_roi"]["part"]["total"] == 1
     assert state["results_deque"][0]["failedItemNames"] == "code"
-    mqtt_handler.db_insert_result.assert_called_once()
+    handler.database.db_insert_result.assert_called_once()
 
 
 def test_historical_result_not_counted_today(handler, state):
@@ -67,7 +67,7 @@ def test_sse_removes_full_queue(handler, state):
 def test_invalid_json_ignored(handler, state):
     handler.on_message(None, None, SimpleNamespace(payload=b"{invalid", topic="anything"))
     assert state["devices"] == {}
-    mqtt_handler.db_insert_result.assert_not_called()
+    handler.database.db_insert_result.assert_not_called()
 
 
 def test_message_dispatch(handler):
@@ -83,7 +83,7 @@ def test_non_object_or_invalid_utf8_is_ignored(handler, state, raw):
     handler.on_message(None, None, SimpleNamespace(
         payload=raw, topic=mqtt_handler.MQTT_CONFIG["topics"]["results"]))
     assert state["stats"]["total"] == 0
-    mqtt_handler.db_insert_result.assert_not_called()
+    handler.database.db_insert_result.assert_not_called()
 
 
 @pytest.mark.parametrize("fields", [
@@ -97,7 +97,7 @@ def test_invalid_result_fields_do_not_mutate_state(handler, state, fields):
     assert state["devices"] == {}
     assert state["stats"]["total"] == 0
     assert list(state["results_deque"]) == []
-    mqtt_handler.db_insert_result.assert_not_called()
+    handler.database.db_insert_result.assert_not_called()
 
 
 def test_duplicate_at_cache_capacity(handler, state):
@@ -113,20 +113,15 @@ def test_duplicate_at_cache_capacity(handler, state):
     (61, "online", "offline"), (61, "offline", "offline"),
 ])
 def test_timeout_boundary(handler, state, monkeypatch, age, status, expected):
-    class StopLoop(Exception):
-        pass
     monkeypatch.setattr(mqtt_handler, "DEVICE_TIMEOUT_SECONDS", 60)
-    monkeypatch.setattr(mqtt_handler.time, "time", lambda: 1000)
-    monkeypatch.setattr(mqtt_handler.time, "sleep", Mock(side_effect=[None, StopLoop]))
     state["devices"]["edge"] = {"status": status, "last_ts": 1000 - age}
-    with pytest.raises(StopLoop):
-        handler.check_device_timeout()
+    handler.expire_devices(now=1000)
     assert state["devices"]["edge"]["status"] == expected
-    assert mqtt_handler.db_upsert_device.call_count == int(status != expected)
+    assert handler.database.db_upsert_device.call_count == int(status != expected)
 
 
 def test_persistence_failure_does_not_stop_broadcast(handler, state):
-    mqtt_handler.db_insert_result.side_effect = RuntimeError("disk failure")
+    handler.database.db_insert_result.side_effect = RuntimeError("disk failure")
     events = queue.Queue()
     state["sse_clients"].append(events)
     handler._handle_result({"reportId": "one"})

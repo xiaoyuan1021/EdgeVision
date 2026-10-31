@@ -21,6 +21,7 @@ RoiManager::RoiManager(QObject* parent)
 void RoiManager::setFullImage(const cv::Mat &img, const QString &filePath)
 {
     if (img.empty()) return;
+    emit inputChanged();
 
     if (m_currentImageId.isEmpty()) {
         QString imageId = addImage(img, generateDefaultImageName(), filePath);
@@ -37,6 +38,20 @@ void RoiManager::setFullImage(const cv::Mat &img, const QString &filePath)
     }
 }
 
+void RoiManager::setVideoFrame(const cv::Mat& frame)
+{
+    if (frame.empty()) return;
+    auto it = m_imageRoisMap.find(m_currentImageId);
+    if (it == m_imageRoisMap.end()) {
+        setFullImage(frame);
+        return;
+    }
+    // A new frame is part of the same stream, not a new display session.
+    // Pending previews coalesce; completed frames may still be displayed.
+    setActiveRoi({});
+    it.value().image = frame.clone();
+}
+
 cv::Mat RoiManager::getFullImage() const
 {
     auto it = m_imageRoisMap.find(m_currentImageId);
@@ -48,6 +63,7 @@ cv::Mat RoiManager::getFullImage() const
 
 void RoiManager::clear()
 {
+    emit inputChanged();
     m_imageRoisMap.clear();
     m_currentImageId.clear();
     m_imageCounter = 0;
@@ -305,6 +321,7 @@ bool RoiManager::setRoi(const QRectF &roiRectF)
 
     spdlog::info("[RoiManager] ROI已创建并激活: {} (x={} y={} w={} h={})", roiName.toStdString(), x, y, w, h);
 
+    emit inputChanged();
     emit roiConfigChanged();
     return true;
 }
@@ -366,6 +383,7 @@ void RoiManager::addRoiConfig(const RoiConfig& config)
 
     it.value().roiConfigs.append(config);
     spdlog::info("[RoiManager] ROI配置已添加: {} (id={}, rect={},{},{},{})", config.roiName.toStdString(), config.roiId.toStdString(), config.roiRect.x(), config.roiRect.y(), config.roiRect.width(), config.roiRect.height());
+    emit inputChanged();
     emit roiConfigChanged();
 }
 
@@ -387,7 +405,8 @@ bool RoiManager::removeRoiConfig(const QString& roiId)
                 imageRois.activeRoiId.clear();
             }
 
-            emit roiConfigChanged();
+            emit inputChanged();
+    emit roiConfigChanged();
             return true;
         }
     }
@@ -463,12 +482,14 @@ void RoiManager::setActiveRoi(const QString& roiId)
     ImageRois& imageRois = it.value();
 
     if (roiId.isEmpty()) {
+        if (!imageRois.activeRoiId.isEmpty()) emit inputChanged();
         imageRois.activeRoiId.clear();
         return;
     }
 
     for (const auto& cfg : imageRois.roiConfigs) {
         if (cfg.roiId == roiId) {
+            if (imageRois.activeRoiId != roiId) emit inputChanged();
             imageRois.activeRoiId = roiId;
             spdlog::info("[RoiManager] ROI已激活: id={}", roiId.toStdString());
             return;
@@ -549,6 +570,7 @@ void RoiManager::importAllConfigsFromJson(const QJsonDocument& doc)
         }
     }
 
+    emit inputChanged();
     emit roiConfigChanged();
 }
 
@@ -629,6 +651,7 @@ void RoiManager::applyProfile(const InspectionProfile& profile, const QSize& cur
 
     spdlog::info("[RoiManager] 已应用检测方案 '{}'，ROI数量: {}", profile.profileName.toStdString(), profile.roiTemplates.size());
 
+    emit inputChanged();
     emit roiConfigChanged();
 }
 

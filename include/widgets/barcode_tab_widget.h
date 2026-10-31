@@ -48,18 +48,19 @@ public:
 private:
     IPipelineAccess* m_pipeline;
     Ui::BarcodeTabForm* m_ui;
+    BarcodeConfig m_draft;
     
     // 更新Pipeline配置
-    void updatePipelineConfig();
+    void applyConfig();
 
 private slots:
     void onEnableBarcodeChanged(bool enabled);
     void onCodeTypeChanged(int index);
     void onMaxNumChanged(int value);
-    void onReturnQualityChanged(bool checked);
     void handleApply();
 
 signals:
+    void draftEdited(const BarcodeConfig& config);
     // 条码配置发生变化
     void barcodeConfigChanged();
     // 请求应用条码识别设置

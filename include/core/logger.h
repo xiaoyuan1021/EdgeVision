@@ -5,8 +5,7 @@
 #include <format>
 
 #include "spdlog/spdlog.h"
-#include "spdlog/sinks/qt_sinks.h"
-#include "spdlog/sinks/rotating_file_sink.h"
+class QTextEdit;
 
 // ============================================================
 // std::formatter specialization for QString
@@ -23,7 +22,7 @@ struct std::formatter<QString> : std::formatter<std::string> {
 // spdlog-based logging setup (replaces old Logger singleton)
 // ============================================================
 
-// Initialize spdlog with rotating file sink + qt_color_sink (UI)
+// Initialize spdlog with rotating file sink + bounded thread-safe session buffer
 // Call once at startup, after QApplication exists
 void setupLogging(QTextEdit* uiTextEdit, const QString& logDir);
 

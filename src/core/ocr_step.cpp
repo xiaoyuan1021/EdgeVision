@@ -67,6 +67,7 @@ void StepOcrRecognition::run(PipelineContext& ctx)
     // 初始化 RapidOCR
     initRapidOcr();
     if (!m_ocr) {
+        ctx.pass = false;
         ctx.reason = "OCR初始化失败: 请检查ocr_models目录";
         return;
     }
@@ -128,6 +129,7 @@ void StepOcrRecognition::run(PipelineContext& ctx)
         spdlog::info("[OCR] {}", ctx.reason.toStdString());
     }
     catch (const std::exception& ex) {
+        ctx.pass = false;
         ctx.reason = QString("OCR 异常: %1").arg(ex.what());
         spdlog::error("[OCR] {}", ctx.reason.toStdString());
     }

@@ -31,13 +31,12 @@ signals:
     void videoSourceChanged(const QString& source);
 
 private slots:
-    void on_btn_openFile_clicked();
-    void on_btn_openCamera_clicked();
-    void on_btn_play_clicked();
-    void on_btn_pause_clicked();
-    void on_btn_stop_clicked();
-    void on_comboBox_camera_currentIndexChanged(int index);
-    void on_slider_progress_valueChanged(int value);
+    void onOpenFileClicked();
+    void onOpenCameraClicked();
+    void onPlayClicked();
+    void onPauseClicked();
+    void onStopClicked();
+    void onProgressChanged(int value);
 
     // 视频管理器信号槽
     void onFrameReady(const cv::Mat& frame);

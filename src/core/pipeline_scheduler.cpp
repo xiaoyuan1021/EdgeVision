@@ -1,15 +1,13 @@
 ﻿#include "pipeline_scheduler.h"
-#include "pipeline_manager.h"
+
 #include "logger.h"
 #include <QElapsedTimer>
 #include <QtConcurrent/QtConcurrent>
+#include <algorithm>
 
-// PipelineRequest 静态成员
-QAtomicInt PipelineRequest::s_nextId{0};
-
-PipelineScheduler::PipelineScheduler(PipelineManager* pipeline, QObject* parent)
+PipelineScheduler::PipelineScheduler(Execute execute, QObject* parent)
     : QObject(parent)
-    , m_pipeline(pipeline)
+    , m_execute(std::move(execute))
     , m_debounceTimer(new QTimer(this))
 {
     // 配置消抖定时器
@@ -38,7 +36,7 @@ qint64 PipelineScheduler::submit(const cv::Mat& image, const PipelineConfig& con
     return submit(std::move(request));
 }
 
-qint64 PipelineScheduler::submit(PipelineRequest request)
+qint64 PipelineScheduler::submit(PipelineRequest request, Policy policy)
 {
     qint64 requestId = request.id();
 
@@ -54,26 +52,30 @@ qint64 PipelineScheduler::submit(PipelineRequest request)
         }
     }
 
-    // 队列满时，移除最低优先级的请求
-    while (m_queue.size() >= m_maxQueueSize) {
-        int lowestIdx = 0;
-        for (int i = 1; i < m_queue.size(); ++i) {
-            if (m_queue[i].priority() < m_queue[lowestIdx].priority()) {
-                lowestIdx = i;
+    QList<qint64> superseded;
+    if (policy == Policy::LatestPreview) {
+        for (int i = m_queue.size() - 1; i >= 0; --i) {
+            if (m_previewIds.contains(m_queue[i].id()) && m_queue[i].caller() == request.caller()) {
+                superseded.append(m_queue[i].id());
+                m_previewIds.remove(m_queue[i].id());
+                m_queue.removeAt(i);
             }
         }
-        spdlog::debug("[PipelineScheduler] 队列满，移除低优先级请求: {}", m_queue[lowestIdx].id());
-        m_queue.removeAt(lowestIdx);
     }
-
-    // 添加到队列
+    if (m_queue.size() >= m_maxQueueSize) {
+        locker.unlock();
+        emit rejected(requestId);
+        return -1;
+    }
+    if (policy == Policy::LatestPreview) m_previewIds.insert(requestId);
     m_queue.enqueue(std::move(request));
-
     locker.unlock();
+    for (qint64 id : superseded) emit cancelled(id);
     emitQueueChanged();
-
-    // 重启消抖定时器
-    m_debounceTimer->start();
+    // Do not restart: continuous frame submission must not starve execution.
+    if (!m_processing.loadAcquire() && !m_debounceTimer->isActive()) {
+        m_debounceTimer->start();
+    }
 
     return requestId;
 }
@@ -86,6 +88,7 @@ void PipelineScheduler::cancel(qint64 requestId)
         if (m_queue[i].id() == requestId) {
             spdlog::debug("[PipelineScheduler] 取消请求: {}", requestId);
             m_queue.removeAt(i);
+            m_previewIds.remove(requestId);
             locker.unlock();
             emit cancelled(requestId);
             emitQueueChanged();
@@ -101,8 +104,12 @@ void PipelineScheduler::cancelAll()
     if (m_queue.isEmpty()) return;
 
     spdlog::debug("[PipelineScheduler] 取消所有请求，队列长度: {}", m_queue.size());
+    QList<qint64> ids;
+    for (const auto& request : m_queue) ids.append(request.id());
     m_queue.clear();
+    m_previewIds.clear();
     locker.unlock();
+    for (qint64 id : ids) emit cancelled(id);
 
     m_debounceTimer->stop();
     emitQueueChanged();
@@ -112,13 +119,13 @@ void PipelineScheduler::cancelAll()
 
 void PipelineScheduler::setDebounceMs(int ms)
 {
-    m_debounceMs = ms;
-    m_debounceTimer->setInterval(ms);
+    m_debounceMs = std::max(0, ms);
+    m_debounceTimer->setInterval(m_debounceMs);
 }
 
 void PipelineScheduler::setMaxQueueSize(int size)
 {
-    m_maxQueueSize = size;
+    m_maxQueueSize = std::max(1, size);
 }
 
 void PipelineScheduler::setDeduplicationEnabled(bool enabled)
@@ -166,15 +173,16 @@ void PipelineScheduler::processNext()
 
     PipelineRequest request = std::move(m_queue[highestIdx]);
     m_queue.removeAt(highestIdx);
+    m_previewIds.remove(request.id());
 
     locker.unlock();
     emitQueueChanged();
 
     // 执行请求
-    executeRequest(request);
+    executeRequest(std::move(request));
 }
 
-void PipelineScheduler::executeRequest(const PipelineRequest& request)
+void PipelineScheduler::executeRequest(PipelineRequest request)
 {
     m_processing.storeRelease(1);
     emit processingChanged(true);
@@ -184,25 +192,16 @@ void PipelineScheduler::executeRequest(const PipelineRequest& request)
         spdlog::debug("[PipelineScheduler] 执行请求: {} (来自: {})", request.id(), request.caller().toStdString());
     }
 
-    // 捕获需要的指针和数据（按值），避免在后台线程中捕获 this
-    PipelineManager* pipeline = m_pipeline;
-    PipelineRequest req = request.snapshot();  // 深拷贝，确保线程安全
-
     QFuture<PipelineResult> future = QtConcurrent::run(
-        [pipeline, req = std::move(req)]() mutable -> PipelineResult {
+        [execute = m_execute, req = std::move(request)]() mutable -> PipelineResult {
             QElapsedTimer timer;
             timer.start();
 
             try {
-                // 检查 PipelineManager 是否有效
-                if (!pipeline) {
-                    return PipelineResult::failure(req, "PipelineManager 已释放");
-                }
-
-                // 执行 Pipeline
-                PipelineContext ctx = pipeline->execute(req.image(), req.config());
+                PipelineContext ctx = execute(req.image(), req.config());
                 double elapsed = timer.elapsed();
 
+                if (!ctx.pass) return PipelineResult::failure(std::move(req), ctx.reason, elapsed);
                 return PipelineResult::success(std::move(req), std::move(ctx), elapsed);
             } catch (const cv::Exception& ex) {
                 double elapsed = timer.elapsed();

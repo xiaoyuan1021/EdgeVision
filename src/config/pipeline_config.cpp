@@ -28,21 +28,10 @@ QJsonObject PipelineConfig::toJson() const {
     obj["colorFilter"] = colorObj;
 
     // 直线检测参数
-    QJsonObject lineObj;
-    lineObj["algorithm"] = lineDetect.algorithm;
-    lineObj["threshold"] = lineDetect.threshold;
-    lineObj["minLength"] = lineDetect.minLength;
-    lineObj["maxGap"] = lineDetect.maxGap;
-    lineObj["enabled"] = lineDetect.enabled;
-    obj["lineDetect"] = lineObj;
+    obj["lineDetect"] = lineDetect.toJson();
 
     // 条码参数
-    QJsonObject barcodeObj;
-    barcodeObj["enableBarcode"] = barcode.enableBarcode;
-    barcodeObj["codeTypes"] = barcode.codeTypes.join(",");
-    barcodeObj["maxNumSymbols"] = barcode.maxNumSymbols;
-    barcodeObj["returnQuality"] = barcode.returnQuality;
-    obj["barcode"] = barcodeObj;
+    obj["barcode"] = barcode.toJson();
 
     // 滤波去噪参数
     obj["imageFilter"] = imageFilter.toJson();
@@ -123,12 +112,7 @@ void PipelineConfig::fromJson(const QJsonObject& obj) {
 
     // 直线检测参数
     if (obj.contains("lineDetect")) {
-        QJsonObject lineObj = obj["lineDetect"].toObject();
-        lineDetect.algorithm   = lineObj["algorithm"].toInt(0);
-        lineDetect.threshold   = lineObj["threshold"].toInt(50);
-        lineDetect.minLength   = lineObj["minLength"].toDouble(30.0);
-        lineDetect.maxGap      = lineObj["maxGap"].toDouble(10.0);
-        lineDetect.enabled     = lineObj["enabled"].toBool(false);
+        lineDetect.fromJson(obj["lineDetect"].toObject());
     }
 
     // 条码参数
@@ -223,9 +207,9 @@ void LineDetectConfig::fromJson(const QJsonObject& obj) {
     maxGap = obj["maxGap"].toDouble(10.0);
     enabled = obj["enabled"].toBool(false);
     enableReferenceLineMatch = obj["enableReferenceLineMatch"].toBool(false);
-    angleThreshold = obj["angleThreshold"].toDouble(10.0);
-    distanceThreshold = obj["distanceThreshold"].toDouble(20.0);
-    searchRegionWidth = obj["searchRegionWidth"].toInt(50);
+    angleThreshold = obj["angleThreshold"].toDouble(LineDetectConfig{}.angleThreshold);
+    distanceThreshold = obj["distanceThreshold"].toDouble(LineDetectConfig{}.distanceThreshold);
+    searchRegionWidth = obj["searchRegionWidth"].toInt(LineDetectConfig{}.searchRegionWidth);
 }
 
 // ========== BarcodeConfig 序列化 ==========
@@ -256,6 +240,9 @@ void BarcodeConfig::fromJson(const QJsonObject& obj) {
     }
     enableBarcode = obj["enableBarcode"].toBool(true);
     codeTypes.clear();
+    if (obj["codeTypes"].isString()) {
+        codeTypes = obj["codeTypes"].toString().split(',', Qt::SkipEmptyParts);
+    }
     QJsonArray codeTypesArray = obj["codeTypes"].toArray();
     for (const QJsonValue& val : codeTypesArray) {
         codeTypes.append(val.toString());

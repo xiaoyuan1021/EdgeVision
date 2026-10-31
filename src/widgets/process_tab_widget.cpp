@@ -1,4 +1,4 @@
-﻿#include "process_tab_widget.h"
+#include "process_tab_widget.h"
 #include "ui_process_tab.h"
 #include "algorithm/opencv_algorithm.h"
 #include "logger.h"
@@ -262,6 +262,7 @@ void ProcessTabWidget::connectSignals(const SignalContext& ctx,
                                       std::function<void()> onExecutePipeline,
                                       std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(ctx); Q_UNUSED(onConfigSaved);
     connect(this, &ProcessTabWidget::algorithmChanged,
             this, [onExecutePipeline]() { onExecutePipeline(); });

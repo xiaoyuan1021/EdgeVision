@@ -98,15 +98,15 @@ VideoSourceWidget::VideoSourceWidget(QWidget* parent)
     
     // 连接信号
     connect(comboType, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &VideoSourceWidget::on_comboSourceType_currentIndexChanged);
+            this, &VideoSourceWidget::onSourceTypeChanged);
     connect(btnOpen, &QPushButton::clicked,
-            this, &VideoSourceWidget::on_btnOpenFile_clicked);
+            this, &VideoSourceWidget::onOpenFileClicked);
     connect(btnDir, &QPushButton::clicked,
-            this, &VideoSourceWidget::on_btnOpenDir_clicked);
+            this, &VideoSourceWidget::onOpenDirectoryClicked);
     connect(btnCam, &QPushButton::clicked,
-            this, &VideoSourceWidget::on_btnOpenCamera_clicked);
+            this, &VideoSourceWidget::onOpenCameraClicked);
     connect(comboCam, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &VideoSourceWidget::on_comboCamera_currentIndexChanged);
+            this, &VideoSourceWidget::onCameraIndexChanged);
     
     updateUIState();
 }
@@ -198,14 +198,14 @@ void VideoSourceWidget::updateCameraList()
     m_cameraList = getAvailableCameras();
 }
 
-void VideoSourceWidget::on_comboSourceType_currentIndexChanged(int index)
+void VideoSourceWidget::onSourceTypeChanged(int index)
 {
     Q_UNUSED(index);
     updateUIState();
     emit sourceTypeChanged(getSourceType());
 }
 
-void VideoSourceWidget::on_btnOpenFile_clicked()
+void VideoSourceWidget::onOpenFileClicked()
 {
     QString filePath = QFileDialog::getOpenFileName(
         this,
@@ -220,7 +220,7 @@ void VideoSourceWidget::on_btnOpenFile_clicked()
     }
 }
 
-void VideoSourceWidget::on_btnOpenDir_clicked()
+void VideoSourceWidget::onOpenDirectoryClicked()
 {
     QString dir = QFileDialog::getExistingDirectory(
         this,
@@ -235,14 +235,14 @@ void VideoSourceWidget::on_btnOpenDir_clicked()
     }
 }
 
-void VideoSourceWidget::on_btnOpenCamera_clicked()
+void VideoSourceWidget::onOpenCameraClicked()
 {
     int index = 0; // 简化实现
     emit cameraSelected(index);
     emit openCameraRequested();
 }
 
-void VideoSourceWidget::on_comboCamera_currentIndexChanged(int index)
+void VideoSourceWidget::onCameraIndexChanged(int index)
 {
     Q_UNUSED(index);
 }

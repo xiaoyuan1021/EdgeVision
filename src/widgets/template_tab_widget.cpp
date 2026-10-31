@@ -1,4 +1,4 @@
-﻿#include "template_tab_widget.h"
+#include "template_tab_widget.h"
 #include "ui_template_tab.h"
 #include "image_view.h"
 #include "logger.h"
@@ -497,6 +497,7 @@ void TemplateTabWidget::connectSignals(const SignalContext& ctx,
                                        std::function<void()> onExecutePipeline,
                                        std::function<void()> onConfigSaved)
 {
+    if (!beginSignalConnections()) return;
     Q_UNUSED(onExecutePipeline); Q_UNUSED(onConfigSaved);
     connect(this, &TemplateTabWidget::imageToShow,
             this, [this](const cv::Mat& img) {
