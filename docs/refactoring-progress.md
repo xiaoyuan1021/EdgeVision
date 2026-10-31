@@ -1,5 +1,30 @@
 # EdgeVision 重构记录（2026-10-31）
 
+## 第二轮：窗口职责、目录与会话细节
+
+开始修改前按要求提交上一轮：`fc45257`（`refactor: isolate pipeline execution and dashboard runtime with UI regressions`）。本节对应之后的独立工作区改动。
+
+- MainWindow 缩减为 357 行，保留窗口展示、组件构造和顶层接线。图片会话/预览、检测页面装配、远程命令/采集分别进入 `InspectionSession`、`DetectionWorkspace`、`RemoteInspectionController`，不向新组件传入 MainWindow 或 Designer UI。
+- `include/application` 与 `src/application` 镜像组织；图片列表控制器移到 `controllers`；第三方依赖与 UI 测试规则分别提取到 `cmake/ThirdParty.cmake` 和 `cmake/UiTests.cmake`。源文件仍显式登记。
+- 删除图片只发布一次切换；剩余图片恢复自己的检测页面。删除最后一张及全量清空同步清除列表、画布、旧结果和待处理预览；图片 ID 计数不回退。
+- 切图保存旧配置，替换图片和重开步骤页保留当前编辑。图片切换清理旧绘制覆盖层，回填不执行。移除无效的 Config/Execute 状态和立即清除的脏标记。
+- 批量任务在开始时保存图像与 ROI 快照，避免重新读取旧磁盘文件或受到后续图片删除/替换影响。
+- 远程采集限制一个任务在途，独立相机在后台采集，使用默认设备 0；完成后核验图片、显示代次与配置，过期帧丢弃。已打开视频使用缓存帧，不抢读下一帧。
+- Scheduler 和自动检测具有显式关闭/等待流程；销毁窗口控件前停止视频和后台任务。统一页面切换动画，并用状态栏自身超时替代鼠标移动时累积的清除定时器。
+- ROI 边界先求交集再取整，拒绝 NaN、非正尺寸和越界区域；批量检测对无效 ROI 明确失败，交互预览也不回退到整图。修复零尺寸 QLabel 坐标映射的除零入口。
+
+验证：
+
+- 主程序完整构建成功：`build/msvc-buildtools-debug-v2/bin/EdgeVision.exe`。
+- `test-msvc.cmd`：6/6 通过（6.86 秒）。
+- `test-ui-msvc.cmd`：2/2 通过（6.02 秒），原有 14 个交互场景与新增 9 个应用流程场景通过；含真实 MainWindow 正常析构。QtTest 连同初始化/清理分别为 16/16、11/11。
+- 上一轮提交前复验云端：97 项通过；本轮没有修改云端代码。
+- `git diff --check` 通过；新增应用源文件全部在 CMake 注册。
+
+边界：后台采集测试使用注入函数，未验收真实相机/Broker、CUDA 或视觉布局。图像快照会增加批量运行的内存占用；关闭需等待驱动/算法返回。现存 ROI 持久化实际采用像素坐标，与归一化规范存在历史差异，本轮不改变旧配置格式；版本化迁移另行设计。模块边界详见 [architecture.md](architecture.md)。
+
+## 第一轮
+
 本轮覆盖桌面执行层、界面交互、云端结构和构建验证。按后续要求，优先清理 Slot by name 与界面事件。开始前已有的 letterbox、配置解析和测试改动保留；没有提交或发布。
 
 ## 界面交互与信号槽

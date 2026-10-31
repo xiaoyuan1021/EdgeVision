@@ -22,8 +22,25 @@ AutoDetectionController::AutoDetectionController(
 
 // ==================== 控制接口 ====================
 
+AutoDetectionController::~AutoDetectionController() { shutdown(); }
+
+void AutoDetectionController::shutdown()
+{
+    if (m_shutdown) return;
+    m_shutdown = true;
+    m_running = false;
+    for (auto* child : children()) {
+        if (auto* watcher = dynamic_cast<QFutureWatcher<ImageDetectionResult>*>(child)) {
+            watcher->disconnect(this);
+            watcher->waitForFinished();
+        }
+    }
+    m_taskInFlight = false;
+}
+
 void AutoDetectionController::startDetection()
 {
+    if (m_shutdown) return;
     if (m_running) {
         emit logMessage("检测已在运行中，请先停止当前检测");
         return;
@@ -120,6 +137,7 @@ QList<ImageDetectionTask> AutoDetectionController::buildTaskList()
         task.imagePath = m_roiManager->getImageFilePath(imageId);
         task.imageName = m_roiManager->getImageName(imageId);
         task.roiConfigs = m_roiManager->getRoiConfigsForImage(imageId);
+        task.image = m_roiManager->getImage(imageId).clone();
 
         // 跳过没有ROI配置的图片（允许imagePath为空，从内存读取）
         if (task.roiConfigs.isEmpty()) {
@@ -171,11 +189,7 @@ void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
     int totalCount = m_stats.totalCount;
 
     // 如果imagePath为空，从RoiManager内存中预先获取图像（lambda中无法访问this）
-    cv::Mat image;
-    if (imagePath.isEmpty() && m_roiManager) {
-        image = m_roiManager->getImage(imageId).clone();
-        spdlog::debug(QString("[检测] 从内存预加载图像: %1 (空=%2)").arg(imageId, image.empty() ? "是" : "否"));
-    }
+    cv::Mat image = task.image;
 
     // 使用 QtConcurrent 在后台线程执行，避免阻塞 UI
     // 注意：lambda中无法使用emit logMessage（无this指针），使用Logger::instance()代替
@@ -209,7 +223,14 @@ void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
                 if (!roiConfig.isActive) continue;
 
                 cv::Rect r = ImageUtils::mapRoiToCvRect(roiConfig.roiRect, finalImage.cols, finalImage.rows);
-                cv::Mat roiImage = r.empty() ? finalImage.clone() : finalImage(r).clone();
+                if (r.empty()) {
+                    RoiDetectionResult invalid(roiConfig.roiId, roiConfig.roiName, imageId);
+                    invalid.passed = false;
+                    invalid.failReason = QStringLiteral("ROI 不在图像有效范围内");
+                    imageResult.addRoiResult(invalid);
+                    continue;
+                }
+                cv::Mat roiImage = finalImage(r).clone();
 
                 PipelineContext ctx = PipelineExecutor::preprocess(roiImage, roiConfig.pipelineConfig);
 

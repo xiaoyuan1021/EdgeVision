@@ -1,49 +1,36 @@
-#include "mainwindow.h"
+#include "ui/mainwindow.h"
 #include "ui_mainwindow.h"
-#include "logger.h"
+#include "application/inspection_session.h"
+#include "application/detection_workspace.h"
+#include "application/remote_inspection_controller.h"
+#include "core/logger.h"
+#include "core/pipeline_manager.h"
+#include "core/profile_manager.h"
+#include "core/mqtt_manager.h"
 #include "config/constants.h"
-#include "image_view.h"
-#include "widgets/i_tab_interfaces.h"
-#include <QtConcurrent/QtConcurrent>
-
-// 各模块完整定义
-#include "system_monitor.h"
-#include "file_manager.h"
-#include "config_manager.h"
-#include "widgets/image_list_manager.h"
+#include "ui/image_view.h"
+#include "ui/system_monitor.h"
+#include "ui/file_manager.h"
+#include "ui/log_page.h"
+#include "ui/toast_notification.h"
+#include "ui/cloud_dashboard_manager.h"
+#include "ui/display_mode_manager.h"
+#include "controllers/image_list_manager.h"
 #include "widgets/tab_manager.h"
-#include "roi_config.h"
-#include "log_page.h"
 #include "controllers/roi_ui_controller.h"
 #include "controllers/roi_detection_config_controller.h"
 #include "controllers/detection_ui_controller.h"
 #include "controllers/config_controller.h"
 #include "controllers/auto_detection_controller.h"
 #include "controllers/pipeline_result_handler.h"
-#include "core/profile_manager.h"
-#include "ui/cloud_dashboard_manager.h"
-#include "ui/display_mode_manager.h"
 #include "controllers/profile_controller.h"
-
-// Tab Widget头文件
-#include "widgets/video_tab_widget.h"
-#include "widgets/barcode_tab_widget.h"
-#include "widgets/template_tab_widget.h"
-#include "widgets/step_config_widget.h"
-
-
-#include <QTabBar>
 #include <QFile>
-#include <QThread>
 #include <QDir>
-#include <QTimer>
 #include <QFileDialog>
-#include <QInputDialog>
-#include <QLineEdit>
-#include <QGroupBox>
+#include <QPropertyAnimation>
+#include <QGraphicsOpacityEffect>
 
-
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(QWidget *parent, std::optional<MqttConfig> mqttConfig)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , m_pipelineManager(new PipelineManager(this))
@@ -52,54 +39,59 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     setWindowState(Qt::WindowMaximized);
-    showMaximized();
 
     setupBasicInfrastructure();
     setupManagers();
     setupControllers();
-    setupControllerConnections();
-    setupTabRegistration();
     setupResultHandler();
-    setupMqtt();
+    m_session = new InspectionSession(m_pipelineManager, &m_roiManager, m_roiUiController,
+        m_tabManager, m_view, m_displayModeManager, this);
+    m_workspace = new DetectionWorkspace(ui->tabWidget, m_tabManager, m_pipelineManager,
+        m_roiManager, m_view, m_roiUiController, m_detectionUiController, m_configController,
+        m_profileManager, m_displayModeManager, m_pipelineResultHandler, this);
+    connect(m_session, &InspectionSession::imageSessionChanged, m_workspace, &DetectionWorkspace::restoreTabVisibility);
+    connect(m_workspace, &DetectionWorkspace::refreshRequested, m_session, &InspectionSession::requestRefresh);
+    connect(m_session, &InspectionSession::statusMessage, ui->statusbar, &QStatusBar::showMessage);
+    setupControllerConnections();
+    m_mqttManager = new MqttManager(this);
+    m_remoteController = new RemoteInspectionController(m_mqttManager, m_autoDetectionController,
+        &m_roiManager, m_pipelineManager, m_tabManager, this);
+    connect(m_remoteController, &RemoteInspectionController::refreshRequested, m_session, &InspectionSession::requestRefresh);
+    connect(m_remoteController, &RemoteInspectionController::startDetectionRequested, this, &MainWindow::startAutoDetection);
+    connect(m_remoteController, &RemoteInspectionController::statusMessage, this,
+        [this](const QString& text) { m_toast->showMessage(text); });
+    m_mqttManager->setupLogging();
+    if (mqttConfig) m_mqttManager->initialize(*mqttConfig);
+    else m_mqttManager->initializeFromConfig();
 }
 
 MainWindow::~MainWindow()
 {
     stopAllAsyncOperations();
+    // Destroy central widgets while their borrowed services and ROI state live.
+    // QObject's base destructor otherwise runs after MainWindow's members.
+    delete takeCentralWidget();
     delete ui;
 }
-
-// ========== 异步资源清理 ==========
 
 void MainWindow::stopAllAsyncOperations()
 {
     m_isDestroying = true;
-
-    // 停止视频播放并断开信号，防止定时器回调访问已销毁的成员
-    if (m_tabManager) {
-        VideoTabWidget* videoTab = m_tabManager->getTabAs<VideoTabWidget>("视频");
-        if (videoTab) {
-            VideoManager* vm = videoTab->getVideoManager();
-            if (vm) {
-                vm->stop();
-                videoTab->disconnect();
-                vm->disconnect();
-            }
-        }
-    }
-
-    // 取消所有待处理的Pipeline请求
-    m_pipelineManager->scheduler()->cancelAll();
-
-    // No Logger singleton to disconnect from anymore
+    m_remoteController->shutdown();
+    m_workspace->stopVideo();
+    m_autoDetectionController->shutdown();
+    m_session->shutdown();
 }
-
-// ========== 初始化 ==========
 
 void MainWindow::setupBasicInfrastructure()
 {
     setupUI();
-    setupAnimations();
+    m_pageFadeAnimation = new QPropertyAnimation(this);
+    m_pageFadeAnimation->setPropertyName("opacity");
+    m_pageFadeAnimation->setDuration(280);
+    m_pageFadeAnimation->setStartValue(0.0);
+    m_pageFadeAnimation->setEndValue(1.0);
+    m_pageFadeAnimation->setEasingCurve(QEasingCurve::OutCubic);
     setupConnections();
 
     // 系统监控
@@ -118,9 +110,7 @@ void MainWindow::setupBasicInfrastructure()
 
     // Initialize LogPage (creates spdlog sinks: UI + rotating file)
     ui->page_log->initialize();
-    connect(ui->page_log, &LogPage::requestGoHome, this, [this]() {
-        ui->stackedWidget_main->setCurrentIndex(0);
-    });
+    connect(ui->page_log, &LogPage::requestGoHome, this, &MainWindow::onHomeClicked);
 }
 
 void MainWindow::setupUI()
@@ -153,36 +143,8 @@ void MainWindow::setupConnections()
     connect(ui->btn_loadFromProfile, &QPushButton::clicked, this, &MainWindow::onLoadFromProfileClicked);
     connect(ui->btn_importFolder, &QPushButton::clicked, this, &MainWindow::onImportFolderClicked);
 
-    connect(&m_roiManager, &RoiManager::inputChanged,
-            m_pipelineManager, &PipelineManager::clearLastResult);
-
-    // FileManager信号
-    connect(m_fileManager, &FileManager::imageLoaded, this, [this](const cv::Mat& img, const QString& filePath) {
-        m_roiManager.setFullImage(img, filePath);
-        m_view->clearRoi();
-        
-        // 清空Pipeline结果，防止旧结果污染新图片显示
-        m_pipelineManager->clearLastResult();
-        m_pipelineManager->resetPipeline();
-        
-        // [FIX] 加载新图片的Pipeline配置（在resetPipeline之后）
-        applyImagePipelineConfig(m_roiManager.getCurrentImageId());
-        
-        // 清空画布，显示新原图（不执行pipeline）
-        showImage(img);
-        
-        // 清空所有已创建Tab页的结果显示
-        for (auto it = m_tabManager->allTabs().constBegin();
-             it != m_tabManager->allTabs().constEnd(); ++it) {
-            if (auto* updatable = dynamic_cast<IResultUpdatable*>(it.value())) {
-                PipelineContext emptyCtx;
-                updatable->updateFromPipeline(emptyCtx);
-            }
-        }
-        
-        spdlog::info("图像加载成功!");
-        // [FIX] 不再自动执行pipeline，等待用户主动配置后点击"应用"
-    });
+    connect(m_fileManager, &FileManager::imageLoaded, this,
+        [this](const cv::Mat& image, const QString& path) { m_session->loadImage(image, path); });
     connect(m_fileManager, &FileManager::imageSaved, this, [](const QString& path) {
         spdlog::info("图像保存成功: {}", path.toStdString());
     });
@@ -195,8 +157,8 @@ void MainWindow::setupConnections()
     connect(m_view, &ImageView::pixelInfoChanged, this, [this](int x, int y, const QColor &color, int gray) {
         ui->statusbar->showMessage(
             QString("X=%1 Y=%2  R=%3 G=%4 B=%5  Gray=%6").arg(x).arg(y)
-                .arg(color.red()).arg(color.green()).arg(color.blue()).arg(gray));
-        QTimer::singleShot(AppConstants::PIXEL_INFO_TIMEOUT_MS, ui->statusbar, &QStatusBar::clearMessage);
+                .arg(color.red()).arg(color.green()).arg(color.blue()).arg(gray),
+            AppConstants::PIXEL_INFO_TIMEOUT_MS);
     });
     connect(m_view, &ImageView::polygonDrawingPointAdded, this,
         [](const QString& type, const QPointF& point) {
@@ -204,65 +166,21 @@ void MainWindow::setupConnections()
         });
 }
 
-void MainWindow::setupAnimations()
+void MainWindow::animatePageSwitch(int, int toIndex)
 {
-    m_pageOpacityEffect = new QGraphicsOpacityEffect(this);
-    m_pageOpacityEffect->setOpacity(1.0);
-    ui->page_home->setGraphicsEffect(m_pageOpacityEffect);
-
-    m_pageFadeAnimation = new QPropertyAnimation(m_pageOpacityEffect, "opacity", this);
-    m_pageFadeAnimation->setDuration(280);
-    m_pageFadeAnimation->setStartValue(0.0);
-    m_pageFadeAnimation->setEndValue(1.0);
-    m_pageFadeAnimation->setEasingCurve(QEasingCurve::OutCubic);
-}
-
-void MainWindow::fadeIn(QWidget* widget, int durationMs)
-{
-    auto* effect = new QGraphicsOpacityEffect(widget);
-    effect->setOpacity(0.0);
-    widget->setGraphicsEffect(effect);
-
-    auto* anim = new QPropertyAnimation(effect, "opacity", widget);
-    anim->setDuration(durationMs);
-    anim->setStartValue(0.0);
-    anim->setEndValue(1.0);
-    anim->setEasingCurve(QEasingCurve::OutCubic);
-    anim->start(QAbstractAnimation::DeleteWhenStopped);
-}
-
-void MainWindow::fadeOut(QWidget* widget, int durationMs)
-{
-    auto* effect = qobject_cast<QGraphicsOpacityEffect*>(widget->graphicsEffect());
+    if (ui->stackedWidget_main->currentIndex() == toIndex) return;
+    auto* page = ui->stackedWidget_main->widget(toIndex);
+    if (!page) return;
+    // One animation for the shell; repeated navigation cannot accumulate animations.
+    m_pageFadeAnimation->stop();
+    auto* effect = qobject_cast<QGraphicsOpacityEffect*>(page->graphicsEffect());
     if (!effect) {
-        effect = new QGraphicsOpacityEffect(widget);
-        widget->setGraphicsEffect(effect);
+        effect = new QGraphicsOpacityEffect(page);
+        page->setGraphicsEffect(effect);
     }
-    effect->setOpacity(1.0);
-
-    auto* anim = new QPropertyAnimation(effect, "opacity", widget);
-    anim->setDuration(durationMs);
-    anim->setStartValue(1.0);
-    anim->setEndValue(0.0);
-    anim->setEasingCurve(QEasingCurve::InCubic);
-    anim->start(QAbstractAnimation::DeleteWhenStopped);
-}
-
-void MainWindow::animatePageSwitch(int fromIndex, int toIndex)
-{
-    if (fromIndex == toIndex) return;
-
-    QWidget* fromPage = ui->stackedWidget_main->widget(fromIndex);
-    QWidget* toPage = ui->stackedWidget_main->widget(toIndex);
-
-    if (!fromPage || !toPage) {
-        ui->stackedWidget_main->setCurrentIndex(toIndex);
-        return;
-    }
-
-    toPage->setGraphicsEffect(nullptr);
     ui->stackedWidget_main->setCurrentIndex(toIndex);
-    fadeIn(toPage, 280);
+    m_pageFadeAnimation->setTargetObject(effect);
+    m_pageFadeAnimation->start();
 }
 
 void MainWindow::setupManagers()
@@ -282,11 +200,7 @@ void MainWindow::setupManagers()
 
     m_imageListManager = new ImageListManager(m_roiManager, m_fileManager, this, this);
     m_imageListManager->init(ui->listWidget_images, ui->btn_addImage, ui->btn_removeImage);
-    connect(m_imageListManager, &ImageListManager::imageDisplayRequested, this, &MainWindow::showImage);
-    connect(m_imageListManager, &ImageListManager::processRequested, this, [this]() { 
-        m_pipelineMode = PipelineMode::Execute;
-        requestRefresh(); 
-    });
+
 }
 
 void MainWindow::setupControllers()
@@ -314,204 +228,22 @@ void MainWindow::setupControllers()
         ui->statusbar, detectionStatusLabel);
     m_roiUiController->setupTreeView(ui->treeView);
     m_roiUiController->setupDisplayConnections(m_tabManager);
-    m_detectionUiController->setupConnections(m_roiUiController,
-        [this](const QString& tabName) { ensureTabExists(tabName); },
-        [this]() {
-            m_pipelineMode = PipelineMode::Execute;
-            requestRefresh();
-        });
+
 }
 
 void MainWindow::setupControllerConnections()
 {
-    // [CLEANUP] 统一 Pipeline 执行入口注释
-
-    // 1. ROI变化 → 执行pipeline（用户添加/删除/切换ROI后）
-    connect(m_roiUiController, &RoiUiController::roiChanged, this, [this]() { 
-        m_pipelineMode = PipelineMode::Execute;
-        requestRefresh(); 
-    });
-    
-    // 2. 配置应用 → 执行pipeline（用户点击"应用"按钮后）
-    connect(m_configController, &ConfigController::configApplied, this, [this]() { 
-        spdlog::info("[MainWindow] configApplied: 保存Pipeline配置到图片 {}", 
-                     m_roiManager.getCurrentImageId().toStdString());
-        m_roiManager.saveImagePipelineConfig(m_roiManager.getCurrentImageId(), 
-                                             m_pipelineManager->getConfigSnapshot());
-        m_pipelineMode = PipelineMode::Execute;
-        requestRefresh(); 
-    });
-    
-    // 3. 方案加载 → 执行pipeline（用户加载检测方案后）
-    connect(m_profileController, &ProfileController::requestRefresh, this, [this]() {
-        m_pipelineMode = PipelineMode::Execute;
+    connect(m_roiUiController, &RoiUiController::roiChanged, m_session, &InspectionSession::requestRefresh);
+    connect(m_configController, &ConfigController::configApplied, this, [this] {
+        m_roiManager.saveImagePipelineConfig(m_roiManager.getCurrentImageId(), m_pipelineManager->getConfigSnapshot());
         requestRefresh();
     });
-
-    // Tab 信号连接（通过 ISignalConnectable 接口多态连接）
-    connect(m_tabManager, &TabManager::tabCreated, this,
-        [this](const QString& tabName, QWidget* widget) {
-            // [CLEANUP] 合并所有 tabCreated 处理逻辑到一个连接
-
-            // 1. ISignalConnectable 接口：建立信号连接
-            auto* connectable = dynamic_cast<ISignalConnectable*>(widget);
-            if (connectable) {
-                connectable->connectSignals(
-                    {m_pipelineManager, &m_roiManager, m_view, m_roiUiController,
-                     [this](const BarcodeConfig& config) { m_roiUiController->updateBarcodeDetectionConfig(config); }},
-                    [this]() {
-                        m_pipelineMode = PipelineMode::Execute;
-                        requestRefresh();
-                    }
-                );
-            } else {
-                spdlog::warn("[MainWindow] Tab '{}' 未实现 ISignalConnectable 接口，跳过信号连接", tabName.toStdString());
-            }
-
-            // 2. IConfigurableTab 接口：注册到 ConfigController
-            if (auto* configurableTab = dynamic_cast<IConfigurableTab*>(widget)) {
-                m_configController->registerTab(configurableTab);
-            }
-
-            // 3. ITabInitializable 接口：执行初始化
-            if (auto* initializableTab = dynamic_cast<ITabInitializable*>(widget)) {
-                TabInitContext ctx;
-                ctx.profileManager = m_profileManager;
-                ctx.pipelineManager = m_pipelineManager;
-                initializableTab->initializeTab(ctx);
-            }
-
-            // 4. VideoTab 特殊处理：播放状态切换时通知推理后端
-            if (auto* videoTab = qobject_cast<VideoTabWidget*>(widget)) {
-                connect(videoTab->getVideoManager(), &VideoManager::playbackStateChanged,
-                        this, [this](VideoManager::PlaybackState state) {
-                            m_pipelineResultHandler->setVideoMode(state == VideoManager::PlaybackState::Playing);
-                        });
-            }
-
-            // 5. StepConfigWidget 特殊处理：tabsNeeded 信号
-            if (auto* stepWidget = qobject_cast<StepConfigWidget*>(widget)) {
-                connect(stepWidget, &StepConfigWidget::tabsNeeded, this, [this](const QStringList& tabNames) {
-                    bool anyNew = false;
-                    for (const auto& name : tabNames) {
-                        if (!m_tabManager->isCreated(name)) {
-                            m_tabManager->ensureTab(name);
-                            anyNew = true;
-                        }
-                    }
-                    if (anyNew) {
-                        m_detectionUiController->setTabNames(m_tabManager->createdTabNames());
-                    }
-                    // 按指定顺序重排 TabBar
-                    auto* tabBar = ui->tabWidget->tabBar();
-                    for (int desired = 0; desired < tabNames.size(); ++desired) {
-                        for (int cur = desired; cur < tabBar->count(); ++cur) {
-                            if (tabBar->tabText(cur) == tabNames[desired]) {
-                                if (cur != desired) {
-                                    tabBar->moveTab(cur, desired);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-        });
-
-    // 批量检测完成提示
-    connect(m_autoDetectionController, &AutoDetectionController::detectionFinished,
-            this, [this](const DetectionStats&) {
-        m_toast->showMessage("批量检测完成");
+    connect(m_profileController, &ProfileController::requestRefresh, m_session, &InspectionSession::requestRefresh);
+    connect(m_autoDetectionController, &AutoDetectionController::detectionFinished, this, [this](const DetectionStats&) {
+        m_toast->showMessage("批量检测结束");
     });
-
-    // 检测项选中跳转
-    connect(m_roiUiController, &RoiUiController::detectionItemSelected, this,
-        [this](const QString& roiId, const QString& detectionId) {
-            m_pipelineMode = PipelineMode::Config;
-            m_needRefresh = false;
-            m_pipelineManager->clearLastResult();
-            m_tabManager->clearAllResults();
-            m_detectionUiController->onDetectionItemSelected(roiId, detectionId, m_tabManager, m_pipelineManager);
-
-            // 更新显示模式管理器的Tab状态（switchToTabConfig内部阻塞了信号，
-            // 导致onTabChanged未触发，m_lastMode与实际Tab不同步）
-            m_displayModeManager->onTabChanged(ui->tabWidget->currentIndex());
-
-            if (auto* roi = m_roiManager.getRoiConfig(roiId)) {
-                for (const auto& item : roi->detectionItems) {
-                    if (item.itemId == detectionId) {
-                        bool isVideoDetect = (item.type == DetectionType::VideoDetection);
-                        m_view->setZoomEnabled(!isVideoDetect);
-                        spdlog::info("画布缩放: {}", isVideoDetect ? "已禁用(视频检测模式)" : "已启用");
-                        break;
-                    }
-                }
-            }
-        });
-
-    // [NOTE] 选中的ROI被删除时清空Tab结果
-    connect(m_roiUiController, &RoiUiController::selectedRoiDeleted, this, [this]() {
-        m_tabManager->clearAllResults();
-    });
-
-    // 工具栏按钮
-    connect(ui->btn_addDetection, &QPushButton::clicked, this, [this]() {
-        spdlog::info("[MainWindow] 用户点击添加检测项");
-        QString roiId = m_roiUiController->getCurrentSelectedRoiId();
-        if (roiId.isEmpty()) {
-            spdlog::info("[MainWindow] 无选中ROI，自动创建整图ROI");
-            roiId = m_roiUiController->addFullImageRoi();
-        }
-        if (!roiId.isEmpty()) {
-            m_detectionUiController->onAddDetectionClicked(roiId);
-        }
-    });
-    connect(ui->btn_deleteDetection, &QPushButton::clicked, this, [this]() {
-        m_detectionUiController->handleDeleteFromTree(ui->treeView);
-    });
-
-    // roiManager → roiUiController 同步连接
-    // 图片切换前保存旧图片的Pipeline配置
-    connect(&m_roiManager, &RoiManager::imageSwitching, this, [this](const QString& fromImageId, const QString&) {
-        if (!fromImageId.isEmpty()) {
-            spdlog::info("[MainWindow] imageSwitching: 保存图片 {} 的Pipeline配置", fromImageId.toStdString());
-            m_roiManager.saveImagePipelineConfig(fromImageId, m_pipelineManager->getConfigSnapshot());
-        }
-        m_roiUiController->saveCurrentRoiPipelineConfig();
-    });
-    // 图片切换后：显示原图（不执行pipeline）
-    connect(&m_roiManager, &RoiManager::currentImageChanged, this, [this](const QString& newImageId) {
-        spdlog::info("[MainWindow] currentImageChanged: 切换到图片 {}", newImageId.toStdString());
-
-        m_pipelineManager->clearLastResult();
-        cv::Mat currentImage = m_roiManager.getCurrentImage();
-        if (!currentImage.empty()) {
-            showImage(currentImage);
-        }
-        // 加载新图片的Pipeline配置
-        applyImagePipelineConfig(newImageId);
-        m_roiUiController->syncRoiConfigsToWidget();
-
-        // [FIX] 统一恢复Tab可见性（检测项优先，其次步骤Tab）
-        restoreTabVisibility();
-    });
-
-    // 删除图片/ROI后：隐藏所有检测相关Tab
-    connect(m_imageListManager, &ImageListManager::imageRemoved, this, &MainWindow::hideAllDetectionTabs);
-    connect(m_roiUiController, &RoiUiController::tabVisibilityUpdateNeeded, this, &MainWindow::hideAllDetectionTabs);
-    connect(m_detectionUiController, &DetectionUiController::tabVisibilityUpdateNeeded, this, &MainWindow::hideAllDetectionTabs);
-}
-
-void MainWindow::setupTabRegistration()
-{
-    // 预创建目标检测Tab，提前加载模型（避免首次点击时才加载），创建后隐藏
-    m_tabManager->ensureTab("目标检测");
-    for (int i = 0; i < ui->tabWidget->count(); ++i) {
-        if (ui->tabWidget->tabText(i) == "目标检测") {
-            ui->tabWidget->setTabVisible(i, false);
-            break;
-        }
-    }
+    connect(ui->btn_addDetection, &QPushButton::clicked, m_workspace, &DetectionWorkspace::addDetection);
+    connect(ui->btn_deleteDetection, &QPushButton::clicked, this, [this] { m_workspace->deleteDetection(ui->treeView); });
 }
 
 void MainWindow::setupResultHandler()
@@ -523,23 +255,12 @@ void MainWindow::setupResultHandler()
     connect(m_pipelineManager->scheduler(), &PipelineScheduler::finished,
             m_pipelineResultHandler, &PipelineResultHandler::onPipelineResult);
 
-    // 执行完成后切回配置模式
-    connect(m_pipelineManager->scheduler(), &PipelineScheduler::finished,
-            this, [this](const PipelineResult&) {
-        m_pipelineMode = PipelineMode::Config;
-    });
-
     // 执行状态变化时更新UI
     connect(m_pipelineManager->scheduler(), &PipelineScheduler::processingChanged,
             this, [this](bool processing) {
         if (processing) {
             ui->statusbar->showMessage("正在处理...");
         }
-    });
-
-    // 队列状态变化时更新UI
-    connect(m_pipelineManager->scheduler(), &PipelineScheduler::queueChanged,
-            this, [this](int pendingCount) {
     });
 
     connect(m_pipelineResultHandler, &PipelineResultHandler::statusMessage,
@@ -552,92 +273,20 @@ void MainWindow::setupResultHandler()
     });
 }
 
-// ========== 核心处理 ==========
+void MainWindow::processAndDisplay() { requestRefresh(); }
 
-void MainWindow::processAndDisplay()
-{
-    // 脏标记检查：没有变化时跳过Pipeline
-    if (!m_needRefresh) return;
-    m_needRefresh = false;
+void MainWindow::showImage(const cv::Mat& image) { m_session->showImage(image); }
 
-    m_displayModeManager->applyModeForCurrentTab();
-
-    cv::Mat currentImage = m_roiManager.getCurrentImage();
-    if (currentImage.empty()) return;
-
-    ui->statusbar->showMessage("正在处理...");
-
-    // 使用调度器异步执行
-    PipelineConfig configSnapshot = m_pipelineManager->getConfigSnapshot();
-    PipelineIdentity identity{m_roiManager.getCurrentImageId(), m_roiManager.getActiveRoiId(),
-                              m_pipelineManager->displayGeneration()};
-    PipelineRequest request(currentImage, configSnapshot, 0, "MainWindow::processAndDisplay", identity);
-    const qint64 id = m_pipelineManager->scheduler()->submit(
-        std::move(request), PipelineScheduler::Policy::LatestPreview);
-    m_pipelineManager->expectRequest(id);
-}
-
-void MainWindow::showImage(const cv::Mat &img)
-{
-    if (img.empty()) {
-        // [NOTE] 画布清空：没有图片时清空所有显示状态和Tab结果
-        m_view->clear();
-        m_pipelineManager->clearLastResult();
-        m_tabManager->clearAllResults();
-    } else {
-        m_view->setImage(ImageUtils::matToQImage(img));
-    }
-}
-
-// ========== 文件操作 ==========
-
-void MainWindow::onPipelineConfigClicked()
-{
-    spdlog::info("[MainWindow] 用户点击自定义Pipeline按钮");
-
-    // 如果没有ROI，自动创建一个"整图"ROI（silent模式，不触发pipeline）
-    QString roiId = m_roiUiController->getCurrentSelectedRoiId();
-    if (roiId.isEmpty()) {
-        spdlog::info("[MainWindow] 无选中ROI，自动创建整图ROI");
-        roiId = m_roiUiController->addFullImageRoi(true);  // silent=true
-    }
-
-    // 加载当前图片的Pipeline配置（包括步骤组合）
-    QString currentImageId = m_roiManager.getCurrentImageId();
-    if (!currentImageId.isEmpty()) {
-        applyImagePipelineConfig(currentImageId);
-        // [FIX] 同步更新ROI的pipelineConfig，防止与PipelineManager不一致
-        m_roiUiController->saveCurrentRoiPipelineConfig();
-        // 通知所有Tab更新UI（包括StepConfigWidget）
-        m_roiUiController->notifyConfigChanged(m_pipelineManager->getConfigSnapshot());
-    }
-
-    // 跳转到「步骤」Tab（Pipeline配置页面）
-    ensureTabExists("步骤");
-
-    for (int i = 0; i < ui->tabWidget->count(); ++i) {
-        if (ui->tabWidget->tabText(i) == "步骤") {
-            ui->tabWidget->setTabVisible(i, true);  // 先显示Tab
-            ui->tabWidget->setCurrentIndex(i);
-            break;
-        }
-    }
-}
-
-
+void MainWindow::onPipelineConfigClicked() { m_workspace->openPipelineConfig(); }
 
 void MainWindow::onCloudPlatformClicked()
 {
     m_cloudDashboardManager->launch();
 }
 
-// ========== ROI操作 ==========
-
 void MainWindow::onAddRoiClicked()      { m_roiUiController->onAddRoiClicked(); }
 void MainWindow::onDeleteRoiClicked()   { m_roiUiController->onDeleteRoiClicked(); }
 void MainWindow::onSwitchRoiClicked()   { m_roiUiController->onSwitchRoiClicked(); }
-
-// ========== Tab切换 ==========
 
 void MainWindow::onTabChanged(int index)
 {
@@ -646,8 +295,6 @@ void MainWindow::onTabChanged(int index)
 
     m_displayModeManager->onTabChanged(index);
 }
-
-// ========== 页面导航 ==========
 
 void MainWindow::onLogClicked()
 {
@@ -659,12 +306,8 @@ void MainWindow::onHomeClicked()
     animatePageSwitch(1, 0);
 }
 
-// ========== 配置管理 ==========
-
 void MainWindow::onSaveConfigClicked()  { m_configController->saveConfig(this); }
 void MainWindow::onImportConfigClicked() { m_configController->loadConfig(this); }
-
-// ========== 自动检测 ==========
 
 void MainWindow::startAutoDetection()
 {
@@ -682,139 +325,7 @@ void MainWindow::onStopAutoDetectionClicked()
     m_autoDetectionController->stopDetection();
 }
 
-// ========== MQTT 边云协同 ==========
-
-void MainWindow::setupMqtt()
-{
-    m_mqttManager = new MqttManager(this);
-    m_mqttManager->initializeFromConfig();
-    m_mqttManager->setupLogging();
-
-    // Feature 1: 自动检测逐张完成 → 上报检测结果
-    connect(m_autoDetectionController, &AutoDetectionController::imageProcessed,
-            this, [this](int index, const QString&, bool) {
-        const auto& results = m_autoDetectionController->results();
-        if (index >= 0 && index < results.size()) {
-            m_mqttManager->publishResult(results[index]);
-        }
-    });
-
-    // Feature 2: 云端指令 → 调用本地功能
-    connect(m_mqttManager, &MqttManager::captureRequested,
-            this, [this]() {
-        m_toast->showMessage("收到云端指令: 采集检测");
-        
-        cv::Mat frame;
-        
-        // 1. 优先从已打开的VideoManager获取新帧
-        VideoTabWidget* videoTab = m_tabManager->getTabAs<VideoTabWidget>("视频");
-        if (videoTab) {
-            VideoManager* vm = videoTab->getVideoManager();
-            if (vm && vm->isOpened()) {
-                frame = vm->getNextFrame();
-            }
-        }
-        
-        // 2. 如果VideoManager未打开或获取失败，自动打开相机捕获一帧
-        if (frame.empty()) {
-            m_toast->showMessage("正在自动打开相机捕获...");
-            
-            try {
-                cv::VideoCapture tempCapture;
-                // 尝试DirectShow后端（Windows兼容性更好）
-                tempCapture.open(1, cv::CAP_DSHOW);  // 使用USB摄像头(索引1)
-                
-                if (!tempCapture.isOpened()) {
-                    tempCapture.open(1);  // 回退到默认后端
-                }
-                
-                if (tempCapture.isOpened()) {
-                    // 等待相机稳定（约300ms）
-                    QThread::msleep(300);
-                    
-                    cv::Mat rawFrame;
-                    if (tempCapture.read(rawFrame)) {
-                        // 相机源左右翻转，提升体验
-                        cv::flip(rawFrame, frame, 1);
-                    }
-                    tempCapture.release();
-                }
-            } catch (const cv::Exception& ex) {
-                spdlog::error("自动打开相机失败: {}", ex.what());
-            }
-        }
-        
-        // 3. 检查是否成功获取帧
-        if (frame.empty()) {
-            m_toast->showMessage("错误：无法获取图像，请手动打开相机");
-            return;
-        }
-        
-        // 4. 将帧存入RoiManager并触发检测
-        m_roiManager.setFullImage(frame);
-        
-        // 为capture采集的图像自动添加全图ROI配置（如果还没有ROI配置）
-        QString currentImageId = m_roiManager.getCurrentImageId();
-        if (!currentImageId.isEmpty() && m_roiManager.getRoiConfigsForImage(currentImageId).isEmpty()) {
-            // RoiConfig defaultRoi;
-            // defaultRoi.roiId = "capture_default_roi";
-            // //defaultRoi.roiName = "全图检测区域";
-            // defaultRoi.roiRect = QRectF(0, 0, 1, 1);  // 全图（归一化坐标）
-            // defaultRoi.pipelineConfig = m_pipelineManager->getConfigSnapshot();
-            // defaultRoi.isActive = true;
-            // m_roiManager.addRoiConfig(defaultRoi);
-            // spdlog::info("[capture] 已为采集的图像添加默认全图ROI配置");
-        }
-        
-        m_toast->showMessage("已采集新帧，正在处理...");
-        requestRefresh();
-    });
-    connect(m_mqttManager, &MqttManager::startDetectionRequested,
-            this, [this]() {
-        m_toast->showMessage("收到云端指令: 开始批量检测");
-        startAutoDetection();
-    });
-    connect(m_mqttManager, &MqttManager::stopDetectionRequested,
-            this, [this]() {
-        m_toast->showMessage("收到云端指令: 停止批量检测");
-        onStopAutoDetectionClicked();
-    });
-    connect(m_mqttManager, &MqttManager::pingRequested,
-            this, [this]() {
-        m_toast->showMessage("收到云端指令: Ping - 已回复心跳");
-    });
-}
-
-// ========== Tab懒加载 ==========
-
-void MainWindow::ensureTabExists(const QString& tabName)
-{
-    if (m_tabManager->isCreated(tabName)) return;
-
-    m_tabManager->ensureTab(tabName);
-
-    m_detectionUiController->setTabNames(m_tabManager->createdTabNames());
-}
-
-// ========== 刷新请求 ==========
-
-void MainWindow::requestRefresh()
-{
-    m_needRefresh = true;
-    processAndDisplay();
-}
-
-// ========== 图片Pipeline配置加载（统一入口）==========
-
-void MainWindow::applyImagePipelineConfig(const QString& imageId)
-{
-    if (imageId.isEmpty()) return;
-    PipelineConfig imageConfig = m_roiManager.loadImagePipelineConfig(imageId);
-    m_pipelineManager->setConfig(imageConfig);
-    m_pipelineManager->rebuildPipeline();
-}
-
-// ========== 方案操作 ==========
+void MainWindow::requestRefresh() { if (!m_isDestroying) m_session->requestRefresh(); }
 
 void MainWindow::onSaveToProfileClicked()
 {
@@ -843,46 +354,4 @@ void MainWindow::onImportFolderClicked()
         spdlog::info("[MainWindow] 从文件夹导入 {} 张图片: {}", imported.size(), dir.toStdString());
     }
 }
-
-void MainWindow::hideAllDetectionTabs()
-{
-    if (!ui->tabWidget) return;
-
-    // 隐藏所有Tab（包括"图像"Tab）
-    for (int i = 0; i < ui->tabWidget->count(); ++i) {
-        ui->tabWidget->setTabVisible(i, false);
-    }
-
-    spdlog::info("[MainWindow] 已隐藏所有Tab");
-}
-
-// ========== 统一Tab可见性恢复 ==========
-
-void MainWindow::restoreTabVisibility()
-{
-    spdlog::info("[MainWindow] restoreTabVisibility: 开始恢复Tab可见性");
-
-    // 1. 先清空所有Tab
-    hideAllDetectionTabs();
-
-    // 2. 优先恢复检测项Tab（如有）
-    if (m_roiUiController->autoSelectFirstDetectionItem()) {
-        spdlog::info("[MainWindow] restoreTabVisibility: 已恢复检测项Tab");
-        return;
-    }
-
-    // 3. 无检测项时，恢复步骤Tab（仅当图片有ROI时才恢复，避免未配置的图片显示"步骤"Tab）
-    const auto currentRois = m_roiManager.getRoiConfigs();
-    if (!currentRois.isEmpty()) {
-        if (auto* stepWidget = m_tabManager->getTabAs<StepConfigWidget>("步骤")) {
-            stepWidget->loadFromConfig(m_pipelineManager->getConfigSnapshot());
-            stepWidget->applyTabVisibility();
-            spdlog::info("[MainWindow] restoreTabVisibility: 已恢复步骤Tab");
-            return;
-        }
-    }
-
-    spdlog::info("[MainWindow] restoreTabVisibility: 无可恢复的Tab");
-}
-
 

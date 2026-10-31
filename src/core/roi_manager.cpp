@@ -63,10 +63,14 @@ cv::Mat RoiManager::getFullImage() const
 
 void RoiManager::clear()
 {
+    const auto ids = getImageIds();
+    if (!m_currentImageId.isEmpty()) emit imageSwitching(m_currentImageId, {});
     emit inputChanged();
     m_imageRoisMap.clear();
     m_currentImageId.clear();
-    m_imageCounter = 0;
+    // Do not reuse an ID if clear/add happen within the same millisecond.
+    for (const auto& id : ids) emit imageRemoved(id);
+    emit currentImageChanged({});
 }
 
 // ==================== 多图片管理 ====================
@@ -109,11 +113,13 @@ bool RoiManager::switchToImage(const QString &imageId)
         return false;
     }
 
-    // [FIX]：在切换m_currentImageId之前发射信号，让调用方保存旧图片的ROI配置
+    if (m_currentImageId == imageId) return true;
+    // Save the outgoing configuration before changing identity.
     if (m_currentImageId != imageId) {
         emit imageSwitching(m_currentImageId, imageId);
     }
 
+    emit inputChanged();
     m_currentImageId = imageId;
     emit currentImageChanged(imageId);
 
@@ -128,19 +134,20 @@ bool RoiManager::removeImage(const QString &imageId)
         return false;
     }
 
-    m_imageRoisMap.remove(imageId);
-
-    if (m_currentImageId == imageId) {
-        if (!m_imageRoisMap.isEmpty()) {
-            m_currentImageId = m_imageRoisMap.firstKey();
-            emit currentImageChanged(m_currentImageId);
-        } else {
-            m_currentImageId.clear();
-        }
+    const bool current = m_currentImageId == imageId;
+    auto remaining = getImageIds();
+    remaining.removeAll(imageId);
+    const QString next = remaining.isEmpty() ? QString{} : remaining.first();
+    if (current) {
+        emit imageSwitching(imageId, next);
+        emit inputChanged();
     }
+    m_imageRoisMap.remove(imageId);
+    if (current) m_currentImageId = next;
 
     spdlog::info("[RoiManager] 图片已移除: id={}", imageId.toStdString());
     emit imageRemoved(imageId);
+    if (current) emit currentImageChanged(m_currentImageId);
 
     return true;
 }
@@ -272,8 +279,8 @@ cv::Mat RoiManager::getCurrentImage() const
         }
     }
 
-    // 激活的ROI无效，返回完整图像
-    return imageRois.image;
+    // Invalid selected ROIs must never silently run against the full image.
+    return {};
 }
 
 bool RoiManager::setRoi(const QRectF &roiRectF)
@@ -307,7 +314,7 @@ bool RoiManager::setRoi(const QRectF &roiRectF)
             qAbs(cfg.roiRect.y() - normalizedRect.y()) <= tolerance &&
             qAbs(cfg.roiRect.width() - normalizedRect.width()) <= tolerance &&
             qAbs(cfg.roiRect.height() - normalizedRect.height()) <= tolerance) {
-            imageRois.activeRoiId = cfg.roiId;
+            setActiveRoi(cfg.roiId);
             spdlog::info("[RoiManager] ROI已激活(矩形匹配): {} (原始矩形与存储矩形差异在容差范围内)", cfg.roiName.toStdString());
             return true;
         }
@@ -333,7 +340,7 @@ void RoiManager::resetRoi()
         return;
     }
 
-    it.value().activeRoiId.clear();
+    setActiveRoi({});
     spdlog::info("[RoiManager] ROI已重置");
 }
 

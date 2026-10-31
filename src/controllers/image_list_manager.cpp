@@ -1,4 +1,4 @@
-﻿#include "widgets/image_list_manager.h"
+#include "controllers/image_list_manager.h"
 #include "logger.h"
 #include "image_utils.h"
 #include "utils/path_utils.h"
@@ -90,13 +90,6 @@ void ImageListManager::onRemoveClicked()
     if (ret == QMessageBox::Yes) {
         m_roiManager.removeImage(currentImageId);
 
-        QStringList imageIds = m_roiManager.getImageIds();
-        if (!imageIds.isEmpty()) {
-            m_roiManager.switchToImage(imageIds.first());
-        } else {
-            emit imageDisplayRequested(cv::Mat());
-        }
-
         emit imageRemoved();
     }
 }
@@ -139,6 +132,7 @@ void ImageListManager::onImageRemoved(const QString& imageId)
 void ImageListManager::onCurrentImageChanged(const QString& imageId)
 {
     const QSignalBlocker blocker(m_listWidget);
+    m_listWidget->setCurrentItem(nullptr);
     for (int i = 0; i < m_listWidget->count(); ++i) {
         QListWidgetItem* item = m_listWidget->item(i);
         if (item->data(Qt::UserRole).toString() == imageId) {
@@ -148,9 +142,7 @@ void ImageListManager::onCurrentImageChanged(const QString& imageId)
     }
 
     const cv::Mat& currentImage = m_roiManager.getFullImage();
-    if (!currentImage.empty()) {
-        emit imageDisplayRequested(currentImage);
-    }
+    emit imageDisplayRequested(currentImage);
 
     spdlog::info(QString("已切换到图片: %1").arg(imageId));
 }

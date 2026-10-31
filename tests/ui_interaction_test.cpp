@@ -15,7 +15,7 @@
 #include "widgets/barcode_tab_widget.h"
 #include "controllers/roi_detection_config_controller.h"
 #include "controllers/roi_ui_controller.h"
-#include "widgets/image_list_manager.h"
+#include "controllers/image_list_manager.h"
 #include "ui/file_manager.h"
 #include "controllers/detection_ui_controller.h"
 #include "controllers/auto_detection_controller.h"

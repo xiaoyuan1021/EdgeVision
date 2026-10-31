@@ -1,5 +1,7 @@
 ﻿#include "image_utils.h"
 #include "logger.h"
+#include <algorithm>
+#include <cmath>
 
 QImage ImageUtils::matToQImage(const cv::Mat &mat)
 {
@@ -121,15 +123,17 @@ cv::Rect ImageUtils::mapRoiToCvRect(const QRectF& roiRect, int imageCols, int im
     if (imageCols <= 0 || imageRows <= 0)
         return cv::Rect();
 
-    int x = std::max(0, (int)std::floor(roiRect.x()));
-    int y = std::max(0, (int)std::floor(roiRect.y()));
-    int w = std::min((int)std::ceil(roiRect.width()), imageCols - x);
-    int h = std::min((int)std::ceil(roiRect.height()), imageRows - y);
-
-    if (w <= 0 || h <= 0)
-        return cv::Rect();
-
-    return cv::Rect(x, y, w, h);
+    if (!std::isfinite(roiRect.x()) || !std::isfinite(roiRect.y()) ||
+        !std::isfinite(roiRect.width()) || !std::isfinite(roiRect.height()) ||
+        roiRect.width() <= 0 || roiRect.height() <= 0) return {};
+    // Intersect edges before integer conversion. Clamping the origin alone
+    // incorrectly extends rectangles that start outside the image.
+    const int left = static_cast<int>(std::clamp(std::floor(roiRect.x()), 0.0, double(imageCols)));
+    const int top = static_cast<int>(std::clamp(std::floor(roiRect.y()), 0.0, double(imageRows)));
+    const int right = static_cast<int>(std::clamp(std::ceil(roiRect.right()), 0.0, double(imageCols)));
+    const int bottom = static_cast<int>(std::clamp(std::ceil(roiRect.bottom()), 0.0, double(imageRows)));
+    if (right <= left || bottom <= top) return {};
+    return cv::Rect(left, top, right - left, bottom - top);
 }
 
 cv::Mat ImageUtils::makeStructElement(int ksize)
@@ -145,7 +149,7 @@ QRect ImageUtils::mapLabelToImage(const QRect &rect, const cv::Mat &img, QLabel 
 
     const int labelW=label->width();
     const int labelH=label->height();
-    if(labelW<0 || labelH<0) return QRect();
+    if(labelW<=0 || labelH<=0) return QRect();
 
     // 转换 QLabel 坐标到 Mat 坐标
     double scaleX = static_cast<double>(img.cols) / labelW;

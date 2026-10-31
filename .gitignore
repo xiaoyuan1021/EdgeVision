@@ -46,6 +46,7 @@ htmlcov/
 docs/*
 !docs/refactoring-progress.md
 !docs/ui-interactions.md
+!docs/architecture.md
 projects/*
 node_modules/*
 .omo/*

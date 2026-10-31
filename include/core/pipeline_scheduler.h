@@ -52,6 +52,8 @@ public:
      * 取消所有待处理请求
      */
     void cancelAll();
+    // Stop accepting requests, disconnect completion delivery, and join work.
+    void shutdown();
 
     // ========== 配置 ==========
 
@@ -132,4 +134,5 @@ private:
 
     // 当前执行的任务
     QFutureWatcher<PipelineResult>* m_watcher = nullptr;
+    bool m_stopped = false;
 };

@@ -66,6 +66,7 @@ struct ImageDetectionTask
     QString imagePath;          ///< 图片文件路径
     QString imageName;          ///< 图片名称
     QList<RoiConfig> roiConfigs; ///< 该图片的ROI配置列表
+    cv::Mat image;              ///< Owned snapshot, captured when the batch starts.
 };
 
 /**
@@ -87,7 +88,8 @@ public:
         RoiManager* roiManager,
         QObject* parent = nullptr);
 
-    ~AutoDetectionController() = default;
+    ~AutoDetectionController() override;
+    void shutdown();
 
     // ==================== 控制接口 ====================
 
@@ -168,6 +170,7 @@ private:
     bool m_taskInFlight = false;
     bool m_paused = false;
     bool m_stopRequested = false;
+    bool m_shutdown = false;
 
     DetectionStats m_stats;
     QList<DetectionResultReport> m_reports;

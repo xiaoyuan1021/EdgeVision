@@ -2,21 +2,18 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QTimer>
-#include <QFutureWatcher>
-#include <QDesktopServices>
-#include <QPropertyAnimation>
-#include <QGraphicsOpacityEffect>
-#include <QParallelAnimationGroup>
-#include <QSplashScreen>
+#include <opencv2/core/mat.hpp>
+#include "core/roi_manager.h"
+#include "config/mqtt_config.h"
+#include <optional>
 
-#include <opencv2/opencv.hpp>
-
-#include "pipeline_manager.h"
-#include "roi_manager.h"
-#include "core/mqtt_manager.h"
-#include "ui/toast_notification.h"
-#include "config/display_config.h"
+class PipelineManager;
+class MqttManager;
+class ToastNotification;
+class QPropertyAnimation;
+class InspectionSession;
+class DetectionWorkspace;
+class RemoteInspectionController;
 
 // 前向声明
 class QLabel;
@@ -56,13 +53,13 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr, std::optional<MqttConfig> mqttConfig = std::nullopt);
     ~MainWindow();
 
     /// 供外部模块请求处理
     void processAndDisplay();
     void showImage(const cv::Mat& img);
-    /// 请求刷新Pipeline（防抖 + 脏标记），供外部模块调用
+    /// Submit a preview through InspectionSession (scheduler coalesces requests).
     void requestRefresh();
 
 private slots:
@@ -89,34 +86,15 @@ private:
     void setupManagers();
     void setupControllers();
     void setupControllerConnections();
-    void setupTabRegistration();
+
     void setupResultHandler();
-    void setupMqtt();
+
     void setupUI();
     void setupConnections();
-    void setupAnimations();
 
     /// 页面切换淡入淡出动画
     void animatePageSwitch(int fromIndex, int toIndex);
-    /// 淡入效果
-    void fadeIn(QWidget* widget, int durationMs = 300);
-    /// 淡出效果
-    void fadeOut(QWidget* widget, int durationMs = 200);
-
-    void ensureTabExists(const QString& tabName);
-
-    /// 安全停止视频（析构时调用，防止定时器回调访问已销毁的成员）
     void stopAllAsyncOperations();
-
-    /// 隐藏所有检测相关Tab（删除图片/ROI后调用）
-    void hideAllDetectionTabs();
-
-    /// 统一恢复Tab可见性（图片切换、配置变更后调用）
-    /// 优先级：检测项Tab > 步骤Tab
-    void restoreTabVisibility();
-
-    /// 加载指定图片的Pipeline配置到PipelineManager（复用模式：loadImagePipelineConfig + setConfig + rebuildPipeline）
-    void applyImagePipelineConfig(const QString& imageId);
 
     Ui::MainWindow *ui;
     ImageView *m_view = nullptr;
@@ -131,10 +109,10 @@ private:
     // Tab管理器
     TabManager* m_tabManager = nullptr;
 
-    // Pipeline执行模式
-    enum class PipelineMode { Config, Execute };
-    PipelineMode m_pipelineMode = PipelineMode::Config;
-    bool m_needRefresh = false;
+    // Application coordinators
+    InspectionSession* m_session = nullptr;
+    DetectionWorkspace* m_workspace = nullptr;
+    RemoteInspectionController* m_remoteController = nullptr;
 
     // Controller对象
     RoiUiController* m_roiUiController = nullptr;
@@ -172,7 +150,6 @@ private:
     QLabel* m_timingLabel = nullptr;
 
     // 动画相关
-    QGraphicsOpacityEffect* m_pageOpacityEffect = nullptr;
     QPropertyAnimation* m_pageFadeAnimation = nullptr;
 };
 

@@ -20,7 +20,7 @@ class QStatusBar;
  * 3. 管理Tab的生命周期
  * 4. 维护Tab名称顺序
  *
- * 信号连接仍由MainWindow在 tabCreated 信号中建立。
+ * DetectionWorkspace handles tabCreated and connects application contracts.
  */
 class TabManager : public QObject
 {
@@ -66,7 +66,7 @@ public:
     void clearAllResults();
 
 signals:
-    /// Tab创建后发出，MainWindow可在此建立信号连接
+    /// Tab创建后发出，由 DetectionWorkspace 建立应用层连接。
     void tabCreated(const QString& name, QWidget* widget);
 
 private:

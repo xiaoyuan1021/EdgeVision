@@ -54,7 +54,7 @@ ORT 预处理把原图等比例缩放后放到补边画布上。旧后处理却�
 ## 阅读顺序
 
 1. `src/widgets/object_detection_tab_widget.cpp`：`onApplyClicked()` 设置开关并发出配置变化信号；`connectSignals()` 把信号连接到执行回调。
-2. `src/ui/mainwindow.cpp`：`processAndDisplay()` 提交图像/配置；`setupResultHandler()` 把调度器完成信号连接到结果处理器。
+2. `src/application/inspection_session.cpp`：`requestRefresh()` 提交图像/配置；MainWindow 的 `setupResultHandler()` 把调度器完成信号连接到结果处理器。
 3. `src/core/pipeline_executor.cpp`：`execute()` 在工作线程完成预处理与目标检测。结果处理器核验图片/ROI/配置归属后只负责显示。
 4. `src/algorithm/object_detection_service.cpp`：每线程持有 ORT/DNN 模型，读取本次任务参数；模型加载和推理失败明确返回失败。
 5. `src/algorithm/ort_inference.cpp`：resize + padding → float/RGB/CHW → Session::Run → 中心坐标解码 → 本次修复的坐标还原 → NMS。
@@ -84,6 +84,13 @@ letterbox_geometry 目标只使用仓库内的 OpenCV 头文件，不依赖 Qt�
 ## Production UI interactions
 
 Run `test-ui-msvc.cmd` from the repository root. It builds the executable and
-`ui_interaction_test` from the same `EdgeVisionRuntime` library, then exercises
+`ui_interaction_test` and `application_workflow_test` from the same `EdgeVisionRuntime` library, then exercises
 real widgets on the Qt offscreen platform. See `docs/ui-interactions.md` for
 signal ownership and rendering rules. No camera or broker is required.
+
+Application workflow coverage includes normal MainWindow destruction with queued
+work, remaining-image tab restoration, last-image removal, full session clear,
+configuration preservation, batch image snapshots, invalid ROI rejection, remote
+capture coalescing/stale-frame rejection, and scheduler shutdown/join semantics.
+Reports are `ui_interaction-results.txt` and `application_workflow-results.txt`
+under the configured desktop build directory.

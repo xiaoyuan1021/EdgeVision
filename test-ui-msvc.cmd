@@ -8,7 +8,8 @@ if errorlevel 1 exit /b 1
 call "%~dp0scripts\msvc-env.cmd"
 if errorlevel 1 exit /b 1
 set "PATH=%EDGEVISION_QT_DIR%\bin;%~dp03rdparty\paho-mqtt\bin;%PATH%"
-ctest --test-dir "%EDGEVISION_BUILD_DIR%" -R "^ui_interaction$" --output-on-failure
+ctest --test-dir "%EDGEVISION_BUILD_DIR%" -R "^(ui_interaction|application_workflow)$" --output-on-failure
 set "TEST_EXIT=%errorlevel%"
-if not "%TEST_EXIT%"=="0" type "%EDGEVISION_BUILD_DIR%\ui-interaction-results.txt"
+if not "%TEST_EXIT%"=="0" type "%EDGEVISION_BUILD_DIR%\ui_interaction-results.txt"
+if not "%TEST_EXIT%"=="0" type "%EDGEVISION_BUILD_DIR%\application_workflow-results.txt"
 exit /b %TEST_EXIT%

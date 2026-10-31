@@ -265,6 +265,7 @@ EdgeVision/
 │   └── rapidocr/               # RapidOCR PP-OCRv4 ONNX 模型
 │
 ├── include/                     # 头文件
+│   ├── application/             # 图片会话、检测工作区、远程采集编排
 │   ├── algorithm/               # 算法层：图像处理、DNN/ONNX推理、条码、OCR、检测评估、渲染
 │   ├── config/                  # 配置层：Pipeline、ROI、增强、过滤、直线、条码、OCR 等 21 个配置头
 │   ├── controllers/             # 控制器层：批量检测、ROI交互、配置管理、Pipeline结果分发
@@ -275,6 +276,7 @@ EdgeVision/
 │   └── widgets/                 # Widget层：23 个功能组件（含步骤拖拽、图像过滤、批量匹配等）
 │
 ├── src/                         # 源文件
+│   ├── application/             # 应用流程实现，不依赖 MainWindow / Designer UI
 │   ├── algorithm/               # 算法实现
 │   ├── config/                  # 配置实现
 │   ├── controllers/             # 控制器实现
@@ -319,6 +321,8 @@ EdgeVision/
 │   └── requirements.txt         # Python 依赖
 │
 ├── logs/                        # 运行日志
+├── cmake/                       # MSVC 依赖追踪、第三方链接、UI 测试目标
+├── docs/architecture.md         # 模块边界、状态转换与关闭顺序
 ├── CMakeLists.txt               # CMake 构建配置
 ├── app_config.json              # 应用默认配置
 ├── AGENTS.md                    # 开发规范文档

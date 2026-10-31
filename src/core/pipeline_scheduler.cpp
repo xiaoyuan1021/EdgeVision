@@ -22,10 +22,20 @@ PipelineScheduler::PipelineScheduler(Execute execute, QObject* parent)
 
 PipelineScheduler::~PipelineScheduler()
 {
+    shutdown();
+}
+
+void PipelineScheduler::shutdown()
+{
+    if (m_stopped) return;
+    m_stopped = true;
+    m_debounceTimer->stop();
+    m_watcher->disconnect(this);
     cancelAll();
     if (m_watcher && m_watcher->isRunning()) {
         m_watcher->waitForFinished();
     }
+    m_processing.storeRelease(0);
 }
 
 // ========== 请求接口 ==========
@@ -39,6 +49,10 @@ qint64 PipelineScheduler::submit(const cv::Mat& image, const PipelineConfig& con
 qint64 PipelineScheduler::submit(PipelineRequest request, Policy policy)
 {
     qint64 requestId = request.id();
+    if (m_stopped) {
+        emit rejected(requestId);
+        return -1;
+    }
 
     QMutexLocker locker(&m_queueMutex);
 

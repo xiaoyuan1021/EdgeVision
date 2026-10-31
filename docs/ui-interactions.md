@@ -17,3 +17,5 @@
 在仓库根目录运行 `test-ui-msvc.cmd`。该目标链接与桌面程序相同的 `EdgeVisionRuntime`，在 Qt offscreen 平台实例化生产 Widget、操作真实控件并核验信号次数。覆盖配置回填、应用/重置/撤销、双向控件绑定、重复接线、图片和 ROI 选择、多个同类检测项、异步结果归属、批量暂停/恢复/停止。
 
 摄像头、真实视频流、CUDA 和模型准确率仍需在对应硬件与数据上验收；offscreen 测试不替代视觉布局检查。
+
+跨页面流程由 `application/DetectionWorkspace` 负责，图片与预览由 `InspectionSession` 负责。图片删除后根据剩余图片重新恢复页面，不无条件隐藏。`test-ui-msvc.cmd` 同时运行生产页面交互与应用流程测试，职责与关闭顺序见 [架构边界](architecture.md)。
