@@ -577,11 +577,14 @@ void RoiManager::importAllConfigsFromJson(const QJsonDocument& doc)
     if (root.contains("currentImageId")) {
         QString savedImageId = root["currentImageId"].toString();
         if (m_imageRoisMap.contains(savedImageId)) {
-            switchToImage(savedImageId);
+            m_currentImageId = savedImageId;
         }
     }
 
     emit inputChanged();
+    // Import replaces saved state. Do not flush outgoing edits over it, and
+    // reload the current image even when its identity did not change.
+    emit currentImageChanged(m_currentImageId);
     emit roiConfigChanged();
 }
 

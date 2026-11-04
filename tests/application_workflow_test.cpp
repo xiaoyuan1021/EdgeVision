@@ -83,6 +83,35 @@ struct WorkspaceFixture {
 class ApplicationWorkflowTest : public QObject {
     Q_OBJECT
 private slots:
+    void importingConfigsDoesNotSaveOutgoingEditsOverRestoredImages() {
+        WorkspaceFixture f;
+        const auto a = f.addImage("a");
+        const auto b = f.addImage("b");
+        f.rois.switchToImage(a);
+        PipelineConfig first, second;
+        first.enhance.brightness = 12;
+        second.enhance.brightness = -9;
+        f.rois.saveImagePipelineConfig(a, first);
+        f.rois.saveImagePipelineConfig(b, second);
+        const auto saved = f.rois.exportAllConfigsToJson();
+        f.rois.switchToImage(b);
+        f.pipeline.updateConfig([](PipelineConfig& c) { c.enhance.brightness = 99; });
+        QSignalSpy outgoing(&f.rois, &RoiManager::imageSwitching);
+        QSignalSpy restored(&f.rois, &RoiManager::currentImageChanged);
+        f.rois.importAllConfigsFromJson(saved);
+        QCOMPARE(f.rois.getCurrentImageId(), a);
+        QCOMPARE(f.rois.loadImagePipelineConfig(b).enhance.brightness, -9);
+        QCOMPARE(f.pipeline.getConfigSnapshot().enhance.brightness, 12);
+        QCOMPARE(outgoing.size(), 0);
+        QCOMPARE(restored.size(), 1);
+
+        f.pipeline.updateConfig([](PipelineConfig& c) { c.enhance.brightness = 88; });
+        f.rois.importAllConfigsFromJson(saved);
+        QCOMPARE(f.pipeline.getConfigSnapshot().enhance.brightness, 12);
+        QCOMPARE(restored.size(), 2);
+        QCOMPARE(f.pipeline.scheduler()->pendingCount(), 0);
+    }
+
     void lineEditsSurviveSiblingSelectionConfigExportAndProfileReload() {
         WorkspaceFixture f;
         f.rois.switchToImage(f.addImage("parts"));
@@ -136,6 +165,13 @@ private slots:
         line->findChild<QPushButton*>("btn_clearReferenceLine")->click();
         const auto* item = f.rois.getRoiConfig(roi.roiId)->getDetectionItem(first.itemId);
         QVERIFY(!item->resolvedPipeline({}).lineDetect.referenceLineValid);
+
+        f.config.applyConfiguration(restored);
+        const auto applied = f.pipeline.getConfigSnapshot();
+        QCOMPARE(applied.lineDetect.angleThreshold, 31.0);
+        QVERIFY(applied.lineDetect.referenceLineValid);
+        QCOMPARE(applied.lineDetect.referenceLineEnd, cv::Point2f(15, 10));
+        QCOMPARE(f.pipeline.scheduler()->pendingCount(), 0);
     }
 
     void roiRunnerExecutesSeparateSnapshotsAndAttributesFailures() {
