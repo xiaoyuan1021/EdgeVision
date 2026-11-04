@@ -293,8 +293,6 @@ void BatchDetectionWidget::processNextImage()
             imageResult.imagePath = imagePath;
 
             try {
-
-
                 cv::Mat image = PathUtils::readImageFromFile(imagePath, cv::IMREAD_COLOR);
                 if (image.empty()) {
                     imageResult.passed = false;
@@ -308,7 +306,13 @@ void BatchDetectionWidget::processNextImage()
 
                     cv::Rect roiRect = ImageUtils::mapRoiToCvRect(
                         roiConfig.roiRect, image.cols, image.rows);
-                    if (roiRect.empty()) continue;
+                    if (roiRect.empty()) {
+                        RoiDetectionResult invalid(roiConfig.roiId, roiConfig.roiName, imageId);
+                        invalid.passed = false;
+                        invalid.failReason = QStringLiteral("ROI 不在图像有效范围内");
+                        imageResult.addRoiResult(invalid);
+                        continue;
+                    }
 
                     cv::Mat roiImage = image(roiRect).clone();
 
