@@ -6,6 +6,9 @@ class ConfigTest : public QObject {
 private slots:
     void legacyLineDefaults() {
         LineDetectConfig config;
+        config.referenceLineStart = {5, 10};
+        config.referenceLineEnd = {40, 70};
+        config.referenceLineValid = true;
         config.fromJson({});
         QCOMPARE(config.toJson(), LineDetectConfig{}.toJson());
     }
@@ -38,6 +41,9 @@ private slots:
         a.lineDetect.theta = .25;
         a.lineDetect.enhance.gamma = 150;
         a.lineDetect.enableReferenceLineMatch = true;
+        a.lineDetect.referenceLineStart = {0, 0};
+        a.lineDetect.referenceLineEnd = {40, 70};
+        a.lineDetect.referenceLineValid = true;
         a.lineDetect.angleThreshold = 7;
         a.lineDetect.distanceThreshold = 12;
         a.lineDetect.searchRegionWidth = 35;

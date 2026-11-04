@@ -1,5 +1,6 @@
 #include "config/pipeline_config.h"
 #include <QJsonArray>
+#include <cmath>
 
 QJsonObject PipelineConfig::toJson() const {
     QJsonObject obj;
@@ -189,6 +190,9 @@ QJsonObject LineDetectConfig::toJson() const {
     obj["maxGap"] = maxGap;
     obj["enabled"] = enabled;
     obj["enableReferenceLineMatch"] = enableReferenceLineMatch;
+    obj["referenceLineStart"] = QJsonArray{referenceLineStart.x, referenceLineStart.y};
+    obj["referenceLineEnd"] = QJsonArray{referenceLineEnd.x, referenceLineEnd.y};
+    obj["referenceLineValid"] = referenceLineValid;
     obj["angleThreshold"] = angleThreshold;
     obj["distanceThreshold"] = distanceThreshold;
     obj["searchRegionWidth"] = searchRegionWidth;
@@ -207,6 +211,20 @@ void LineDetectConfig::fromJson(const QJsonObject& obj) {
     maxGap = obj["maxGap"].toDouble(10.0);
     enabled = obj["enabled"].toBool(false);
     enableReferenceLineMatch = obj["enableReferenceLineMatch"].toBool(false);
+    const auto start = obj["referenceLineStart"].toArray();
+    const auto end = obj["referenceLineEnd"].toArray();
+    referenceLineStart = {};
+    referenceLineEnd = {};
+    referenceLineValid = false;
+    if (start.size() == 2 && end.size() == 2 && start[0].isDouble() && start[1].isDouble()
+        && end[0].isDouble() && end[1].isDouble()) {
+        referenceLineStart = {float(start[0].toDouble()), float(start[1].toDouble())};
+        referenceLineEnd = {float(end[0].toDouble()), float(end[1].toDouble())};
+        referenceLineValid = obj["referenceLineValid"].toBool(false)
+            && std::isfinite(referenceLineStart.x) && std::isfinite(referenceLineStart.y)
+            && std::isfinite(referenceLineEnd.x) && std::isfinite(referenceLineEnd.y)
+            && referenceLineStart != referenceLineEnd;
+    }
     angleThreshold = obj["angleThreshold"].toDouble(LineDetectConfig{}.angleThreshold);
     distanceThreshold = obj["distanceThreshold"].toDouble(LineDetectConfig{}.distanceThreshold);
     searchRegionWidth = obj["searchRegionWidth"].toInt(LineDetectConfig{}.searchRegionWidth);
