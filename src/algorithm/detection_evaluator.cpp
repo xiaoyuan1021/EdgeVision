@@ -1,4 +1,4 @@
-﻿#include "algorithm/detection_evaluator.h"
+#include "algorithm/detection_evaluator.h"
 #include "config/detection_config_types.h"
 #include "logger.h"
 #include <stdexcept>
@@ -30,8 +30,14 @@ DetectionItemResult DetectionEvaluator::evaluateItem(
         case DetectionType::Ocr:
             result = evaluateOcr(detItem, ctx);
             break;
+        case DetectionType::Custom:
+            result.passed = ctx.pass;
+            result.failReason = ctx.reason;
+            break;
         default:
             result = DetectionItemResult(detItem.itemId, detItem.itemName, detectionTypeToString(detItem.type));
+            result.passed = false;
+            result.failReason = QStringLiteral("该检测类型不支持批量评估");
             spdlog::warn(QString("[评估] 未知检测类型: %1").arg(detectionTypeToString(detItem.type)));
             break;
     }
@@ -40,48 +46,6 @@ DetectionItemResult DetectionEvaluator::evaluateItem(
     result.itemName = detItem.itemName;
     result.detectionType = detectionTypeToString(detItem.type);
     return result;
-}
-
-RoiDetectionResult DetectionEvaluator::evaluateRoi(
-    const RoiConfig& roiConfig,
-    const PipelineContext& ctx,
-    const cv::Mat& roiImage,
-    const Detect& detect)
-{
-    RoiDetectionResult roiResult(roiConfig.roiId, roiConfig.roiName, QString());
-
-    // 填充Pipeline检测结果到ROI结果
-    roiResult.regionCount = ctx.regionCount;
-    roiResult.regionFeatures = ctx.regionFeatures;
-    roiResult.barcodeResults = ctx.barcodeResults;
-    roiResult.ocrText = ctx.ocrText;
-    roiResult.ocrRegions = ctx.ocrRegions;
-    roiResult.matchedLineCount = ctx.matchedLineCount;
-    roiResult.totalLineCount = ctx.totalLineCount;
-
-    // [NOTE] Pipeline执行失败时，直接标记ROI为FAIL，不再评估检测项
-    if (!ctx.pass) {
-        DetectionItemResult pipelineItem("pipeline", "Pipeline执行", "Pipeline");
-        pipelineItem.passed = false;
-        pipelineItem.failReason = ctx.reason.isEmpty() ? "Pipeline执行失败" : ctx.reason;
-        roiResult.addItemResult(pipelineItem);
-        spdlog::warn(QString("[评估] ROI '%1' Pipeline执行失败: %2")
-            .arg(roiConfig.roiName, pipelineItem.failReason));
-        return roiResult;
-    }
-
-    // 评估每个检测项
-    for (const DetectionItem& detItem : roiConfig.detectionItems) {
-        DetectionItemResult itemResult = evaluateItem(detItem, ctx, roiImage, detect);
-        roiResult.addItemResult(itemResult);
-    }
-
-    // 只在失败时打印日志
-    if (!roiResult.passed) {
-        spdlog::warn(QString("[评估] %1").arg(roiResult.toSummaryString()));
-    }
-
-    return roiResult;
 }
 
 // ==================== 私有评估方法 ====================

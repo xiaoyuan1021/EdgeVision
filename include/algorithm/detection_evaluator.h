@@ -6,16 +6,7 @@
 #include "data/roi_detection_result.h"
 #include <functional>
 
-/**
- * 检测项评估器
- *
- * 封装了根据 PipelineContext 和 DetectionItem 配置判定 pass/fail 的逻辑。
- * 从 AutoDetectionController 中提取，便于复用和单元测试。
- *
- * 使用方式：
- *   RoiDetectionResult result = DetectionEvaluator::evaluateRoi(
- *       roiConfig, ctx, roiImage, detect);
- */
+// Pure per-item judgments; ROI execution is coordinated by RoiInspectionRunner.
 class DetectionEvaluator
 {
 public:
@@ -30,20 +21,6 @@ public:
      */
     static DetectionItemResult evaluateItem(
         const DetectionItem& detItem,
-        const PipelineContext& ctx,
-        const cv::Mat& roiImage,
-        const Detect& detect);
-
-    /**
-     * 评估一个ROI的所有检测项，构建完整的RoiDetectionResult
-     * @param roiConfig ROI配置（含检测项列表）
-     * @param ctx Pipeline执行结果（单ROI）
-     * @param roiImage ROI裁剪图像
-     * @param detect 独立推理函数
-     * @return ROI级别的检测结果
-     */
-    static RoiDetectionResult evaluateRoi(
-        const RoiConfig& roiConfig,
         const PipelineContext& ctx,
         const cv::Mat& roiImage,
         const Detect& detect);

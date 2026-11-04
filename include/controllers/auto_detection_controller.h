@@ -12,7 +12,8 @@
 #include "roi_manager.h"
 #include "data/detection_result_report.h"
 
-// 前向声明
+struct ImageDetectionResult;
+template<class T> class QFutureWatcher;
 
 /**
  * 检测统计信息
@@ -70,7 +71,7 @@ struct ImageDetectionTask
 };
 
 /**
- * 自动检测控制器（方案B：基于RoiManager中已有的图片和ROI配置）
+ * 自动检测控制器：使用启动时的图片与 ROI 配置快照
  *
  * 工作流程：
  * 1. 从 RoiManager 获取所有已添加的图片及其 ROI 配置
@@ -123,7 +124,7 @@ public:
 
     // ==================== UI连接 ====================
 
-    /// 将UI信号连接到Controller（从MainWindow迁移）
+    /// 将UI信号连接到Controller
     void setupUiConnections(QPushButton* startBtn, QPushButton* stopBtn,
                             QStatusBar* statusBar, QLabel* statusLabel);
 
@@ -156,13 +157,16 @@ private:
     /// 处理下一个任务
     void processNextTask();
 
-    /// 处理单个图片任务（在后台线程执行）
+    /// 提交一个拥有数据快照的任务，完成信号回到 Controller 线程。
     void processImageTask(const ImageDetectionTask& task);
+    static ImageDetectionResult executeTask(const ImageDetectionTask& task);
+    void onTaskFinished();
 
     /// 完成检测
     void finishDetection();
 
     RoiManager* m_roiManager;
+    QFutureWatcher<ImageDetectionResult>* m_watcher;
 
     QList<ImageDetectionTask> m_tasks;    ///< 待检测任务列表
     int m_currentIndex = 0;

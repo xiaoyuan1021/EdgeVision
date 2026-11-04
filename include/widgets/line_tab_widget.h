@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <QWidget>
 #include <functional>
@@ -28,7 +28,7 @@ public:
                         std::function<void()> onExecutePipeline,
                         std::function<void()> onConfigSaved = nullptr) override;
 
-    /// [NOTE] 设置直线检测配置（从DetectionItem.config恢复到UI）
+    /// 设置直线检测配置（从DetectionItem.config恢复到UI）
     void setLineConfig(const LineDetectConfig& config);
     void loadFromConfig(const PipelineConfig& config) override { setLineConfig(config.lineDetect); }
     void saveToConfig(PipelineConfig& config) const override { config.lineDetect = getLineState(); }
@@ -43,6 +43,8 @@ private:
     using LineDetectState = LineDetectConfig;
     LineDetectState getLineState() const;
     void setLineState(const LineDetectState& state);
+    void commitLineConfig(LineDetectConfig state, bool execute);
+    void renderReferenceLineStatus(const LineDetectConfig& state);
 
 private slots:
     void onLineAlgorithmChanged(int index);
@@ -70,6 +72,7 @@ public:
     void setReferenceLine(const cv::Point2f& start, const cv::Point2f& end);
 
 signals:
+    void lineConfigEdited(const LineDetectConfig& state);
     // 请求绘制参考线
     void requestDrawReferenceLine();
     

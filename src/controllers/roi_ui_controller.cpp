@@ -440,6 +440,7 @@ void RoiUiController::activateDetectionItem(const QString& roiId, const QString&
 {
     if (roiId.isEmpty() || detectionId.isEmpty()) return;
     if (m_currentSelectedRoiId != roiId) handleRoiSelection(roiId);
+    if (m_currentSelectedDetectionId != detectionId) saveCurrentRoiPipelineConfig();
     m_currentSelectedDetectionId = detectionId;
     if (m_treeView) {
         const QSignalBlocker selecting(m_treeView);
@@ -566,22 +567,19 @@ bool RoiUiController::renameRoi(const QString& roiId, const QString& newName)
 
 void RoiUiController::saveCurrentRoiPipelineConfig()
 {
-    if (m_currentSelectedRoiId.isEmpty() || !m_pipelineManager) {
-        return;
-    }
-    
-    RoiConfig* roi = m_roiManager.getRoiConfig(m_currentSelectedRoiId);
-    if (roi) {
-        roi->pipelineConfig = m_pipelineManager->getConfigSnapshot();
-        spdlog::debug(QString("[RoiUI] 已保存ROI [%1] 的Pipeline配置: brightness=%2, contrast=%3, gamma=%4")
-            .arg(roi->roiName)
-            .arg(roi->pipelineConfig.enhance.brightness)
-            .arg(roi->pipelineConfig.enhance.contrast)
-            .arg(roi->pipelineConfig.enhance.gamma));
+    if (m_pipelineManager) saveCurrentConfiguration(m_pipelineManager->getConfigSnapshot());
+}
+
+void RoiUiController::saveCurrentConfiguration(const PipelineConfig& config)
+{
+    m_roiManager.saveImagePipelineConfig(m_roiManager.getCurrentImageId(), config);
+    if (auto* roi = m_roiManager.getRoiConfig(m_currentSelectedRoiId)) {
+        roi->pipelineConfig = config;
+        if (auto* item = roi->getDetectionItem(m_currentSelectedDetectionId))
+            item->savePipeline(config);
     } else {
-        // ROI已不存在（切换图片/profile后），清理幽灵引用
-        spdlog::debug(QString("[RoiUI] saveCurrentRoiPipelineConfig: 清理幽灵ROI引用, id=%1").arg(m_currentSelectedRoiId));
         m_currentSelectedRoiId.clear();
+        m_currentSelectedDetectionId.clear();
     }
 }
 

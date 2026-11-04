@@ -2,13 +2,10 @@
 #include "algorithm/object_detection_service.h"
 #include "controllers/auto_detection_controller.h"
 #include "logger.h"
-#include "utils/path_utils.h"
 #include "config/detection_config_types.h"
 #include "algorithm/image_utils.h"
-#include "algorithm/detection_evaluator.h"
+#include "core/roi_inspection_runner.h"
 #include "data/roi_detection_result.h"
-#include <QFileInfo>
-#include <QCoreApplication>
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
 
@@ -17,7 +14,10 @@ AutoDetectionController::AutoDetectionController(
     QObject* parent)
     : QObject(parent)
     , m_roiManager(roiManager)
+    , m_watcher(new QFutureWatcher<ImageDetectionResult>(this))
 {
+    connect(m_watcher, &QFutureWatcher<ImageDetectionResult>::finished,
+            this, &AutoDetectionController::onTaskFinished);
 }
 
 // ==================== 控制接口 ====================
@@ -29,12 +29,8 @@ void AutoDetectionController::shutdown()
     if (m_shutdown) return;
     m_shutdown = true;
     m_running = false;
-    for (auto* child : children()) {
-        if (auto* watcher = dynamic_cast<QFutureWatcher<ImageDetectionResult>*>(child)) {
-            watcher->disconnect(this);
-            watcher->waitForFinished();
-        }
-    }
+    m_watcher->disconnect(this);
+    m_watcher->waitForFinished();
     m_taskInFlight = false;
 }
 
@@ -137,15 +133,15 @@ QList<ImageDetectionTask> AutoDetectionController::buildTaskList()
         task.imagePath = m_roiManager->getImageFilePath(imageId);
         task.imageName = m_roiManager->getImageName(imageId);
         task.roiConfigs = m_roiManager->getRoiConfigsForImage(imageId);
-        task.image = m_roiManager->getImage(imageId).clone();
 
-        // 跳过没有ROI配置的图片（允许imagePath为空，从内存读取）
+        // 无 ROI 的图片不参与批量检测，也不分配快照。
         if (task.roiConfigs.isEmpty()) {
             spdlog::debug(QString("[buildTaskList] 跳过图片 %1: 没有ROI配置").arg(imageId));
             continue;
         }
 
-        tasks.append(task);
+        task.image = m_roiManager->getImage(imageId).clone();
+        tasks.append(std::move(task));
     }
 
     spdlog::info(QString("[buildTaskList] 构建了 %1 个检测任务（共 %2 张图片）")
@@ -178,154 +174,122 @@ void AutoDetectionController::processNextTask()
     processImageTask(m_tasks[m_currentIndex]);
 }
 
+ImageDetectionResult AutoDetectionController::executeTask(const ImageDetectionTask& task)
+{
+    ImageDetectionResult result;
+    result.imageId = task.imageId;
+    result.imageName = task.imageName;
+    result.imagePath = task.imagePath;
+
+    // 任务只读取启动时的快照，不重新打开可能已被替换的磁盘文件。
+    const cv::Mat& image = task.image;
+    if (image.empty()) {
+        result.passed = false;
+        result.failReason = QStringLiteral("检测任务没有图像快照");
+        spdlog::error("[检测] {}: {}", task.imageId.toStdString(), result.failReason.toStdString());
+        return result;
+    }
+
+    try {
+        for (const RoiConfig& roi : task.roiConfigs) {
+            if (!roi.isActive) continue;
+            const cv::Rect rect = ImageUtils::mapRoiToCvRect(roi.roiRect, image.cols, image.rows);
+            if (rect.empty()) {
+                RoiDetectionResult invalid(roi.roiId, roi.roiName, task.imageId);
+                invalid.passed = false;
+                invalid.failReason = QStringLiteral("ROI 不在图像有效范围内");
+                result.addRoiResult(invalid);
+                continue;
+            }
+            const cv::Mat roiImage = image(rect).clone();
+            auto roiResult = RoiInspectionRunner::run(
+                roi, roiImage, PipelineExecutor::preprocess, ObjectDetectionService::detect);
+            roiResult.imageId = task.imageId;
+            result.addRoiResult(roiResult);
+        }
+    } catch (const cv::Exception& ex) {
+        result.passed = false;
+        result.failReason = QString("OpenCV错误: %1").arg(ex.what());
+        spdlog::error("[检测] {}", result.failReason.toStdString());
+    } catch (const std::exception& ex) {
+        result.passed = false;
+        result.failReason = QString("异常: %1").arg(ex.what());
+        spdlog::error("[检测] {}", result.failReason.toStdString());
+    }
+    return result;
+}
+
 void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
 {
-    // 捕获需要的指针和数据（按值），避免在后台线程中捕获 this
-    QList<RoiConfig> roiConfigs = task.roiConfigs;  // 值拷贝，线程安全
-    QString imagePath = task.imagePath;
-    QString imageName = task.imageName;
-    QString imageId = task.imageId;
-    int currentIndex = m_currentIndex;
-    int totalCount = m_stats.totalCount;
-
-    // 如果imagePath为空，从RoiManager内存中预先获取图像（lambda中无法访问this）
-    cv::Mat image = task.image;
-
-    // 使用 QtConcurrent 在后台线程执行，避免阻塞 UI
-    // 注意：lambda中无法使用emit logMessage（无this指针），使用Logger::instance()代替
     m_taskInFlight = true;
-    QFuture<ImageDetectionResult> future = QtConcurrent::run(
-        [imagePath, imageName, imageId, roiConfigs, image]() -> ImageDetectionResult {
-            // 创建图片级别的检测结果
-            ImageDetectionResult imageResult;
-            imageResult.imageId = imageId;
-            imageResult.imageName = imageName;
-            imageResult.imagePath = imagePath;
+    // 不捕获 Controller；窗口关闭后等待的只有独立任务数据。
+    m_watcher->setFuture(QtConcurrent::run([task] { return executeTask(task); }));
+}
 
-            try {
-            spdlog::debug(QString("[检测] 开始处理图片: %1 (路径: %2)").arg(imageId, imagePath));
+void AutoDetectionController::onTaskFinished()
+{
+    const auto imageResult = m_watcher->result();
+    const auto& task = m_tasks[m_currentIndex];
+    const int currentIndex = m_currentIndex;
+    const int totalCount = m_stats.totalCount;
+    // 更新统计
+    m_stats.processedCount++;
+    m_stats.elapsedMs = m_elapsedTimer.elapsed();
 
-            cv::Mat finalImage = image;  // 使用预加载的图像
-            if (finalImage.empty() && !imagePath.isEmpty()) {
-                // 从文件读取图像
-                finalImage = PathUtils::readImageFromFile(imagePath, cv::IMREAD_COLOR);
-            }
+    bool passed = imageResult.passed;
+    if (passed) {
+        m_stats.passCount++;
+    } else {
+        m_stats.failCount++;
+        m_failedImages.append(task.imagePath);
+    }
 
-            if (finalImage.empty()) {
-                spdlog::error(QString("[检测] 无法加载图片: %1 (路径: %2)").arg(imageId, imagePath.isEmpty() ? "内存中无图像" : imagePath));
-                imageResult.passed = false;
-                imageResult.failReason = QString("无法加载图片: %1").arg(imagePath.isEmpty() ? "内存中无图像" : imagePath);
-                return imageResult;
-            }
+    // 生成检测报告，包含每个ROI的检测项结果
+    DetectionResultReport report;
+    report.imageId = task.imageId;
+    report.imageName = task.imageName;
+    report.passed = imageResult.passed;
+    report.failReason = imageResult.failReason;
 
-            // 遍历每个ROI，独立评估检测结果
-            for (const RoiConfig& roiConfig : roiConfigs) {
-                if (!roiConfig.isActive) continue;
-
-                cv::Rect r = ImageUtils::mapRoiToCvRect(roiConfig.roiRect, finalImage.cols, finalImage.rows);
-                if (r.empty()) {
-                    RoiDetectionResult invalid(roiConfig.roiId, roiConfig.roiName, imageId);
-                    invalid.passed = false;
-                    invalid.failReason = QStringLiteral("ROI 不在图像有效范围内");
-                    imageResult.addRoiResult(invalid);
-                    continue;
-                }
-                cv::Mat roiImage = finalImage(r).clone();
-
-                PipelineContext ctx = PipelineExecutor::preprocess(roiImage, roiConfig.pipelineConfig);
-
-                // [NOTE] 使用DetectionEvaluator评估该ROI的所有检测项
-                RoiDetectionResult roiResult = DetectionEvaluator::evaluateRoi(
-                    roiConfig, ctx, roiImage, ObjectDetectionService::detect);
-                roiResult.imageId = imageId;
-
-                imageResult.addRoiResult(roiResult);
-            }
-
-            return imageResult;
-            } catch (const cv::Exception& ex) {
-                spdlog::error(QString("[检测] OpenCV错误: %1").arg(ex.what()));
-                imageResult.passed = false;
-                imageResult.failReason = QString("OpenCV错误: %1").arg(ex.what());
-                return imageResult;
-            } catch (const std::exception& ex) {
-                spdlog::error(QString("[检测] 异常: %1").arg(ex.what()));
-                imageResult.passed = false;
-                imageResult.failReason = QString("异常: %1").arg(ex.what());
-                return imageResult;
-            }
+    // 汇总所有ROI的检测项结果
+    for (const auto& roiResult : imageResult.roiResults) {
+        for (const auto& itemResult : roiResult.itemResults) {
+            DetectionItemReport itemReport;
+            itemReport.itemName = itemResult.itemName;
+            itemReport.detectionType = itemResult.detectionType;
+            itemReport.passed = itemResult.passed;
+            itemReport.failReason = itemResult.failReason;
+            report.itemResults.append(itemReport);
         }
-    );
+    }
 
-    // 使用 watcher 等待结果（在主线程中处理）
-    QFutureWatcher<ImageDetectionResult>* watcher = new QFutureWatcher<ImageDetectionResult>(this);
-    connect(watcher, &QFutureWatcher<ImageDetectionResult>::finished, this,
-        [this, watcher, task, currentIndex, totalCount]() {
-            ImageDetectionResult imageResult = watcher->result();
-            watcher->deleteLater();
+    m_reports.append(report);
 
-            // 更新统计
-            m_stats.processedCount++;
-            m_stats.elapsedMs = m_elapsedTimer.elapsed();
+    // 发送信号
+    emit imageProcessed(currentIndex, task.imagePath, passed);
+    emit progressUpdated(currentIndex + 1, totalCount);
+    emit statsUpdated(m_stats);
 
-            bool passed = imageResult.passed;
-            if (passed) {
-                m_stats.passCount++;
-            } else {
-                m_stats.failCount++;
-                m_failedImages.append(task.imagePath);
-            }
-
-            // [NOTE] 生成检测报告，包含每个ROI的检测项结果
-            DetectionResultReport report;
-            report.imageId = task.imageId;
-            report.imageName = task.imageName;
-            report.passed = imageResult.passed;
-            report.failReason = imageResult.failReason;
-
-            // 汇总所有ROI的检测项结果
-            for (const auto& roiResult : imageResult.roiResults) {
-                for (const auto& itemResult : roiResult.itemResults) {
-                    DetectionItemReport itemReport;
-                    itemReport.itemName = itemResult.itemName;
-                    itemReport.detectionType = itemResult.detectionType;
-                    itemReport.passed = itemResult.passed;
-                    itemReport.failReason = itemResult.failReason;
-                    report.itemResults.append(itemReport);
-                }
-            }
-
-            m_reports.append(report);
-
-            // 发送信号
-            emit imageProcessed(currentIndex, task.imagePath, passed);
-            emit progressUpdated(currentIndex + 1, totalCount);
-            emit statsUpdated(m_stats);
-
-            // [NOTE] 关键修改：记录日志，显示每个ROI的独立结果
-            QString status = passed ? "PASS" : "FAIL";
-            QString roiSummary;
-            for (const auto& roiResult : imageResult.roiResults) {
-                if (!roiResult.passed) {
-                    if (!roiSummary.isEmpty()) roiSummary += "; ";
-                    roiSummary += QString("%1:%2").arg(roiResult.roiName, roiResult.failReason);
-                }
-            }
-            emit logMessage(QString("[%1/%2] %3 -> %4 (%5)")
-                .arg(currentIndex + 1)
-                .arg(totalCount)
-                .arg(task.imageName)
-                .arg(status)
-                .arg(roiSummary.isEmpty() ? "OK" : roiSummary));
-
-            // 处理下一个任务
-            m_currentIndex++;
-            m_taskInFlight = false;
-            processNextTask();
+    // 记录日志，显示每个ROI的独立结果
+    QString status = passed ? "PASS" : "FAIL";
+    QString roiSummary;
+    for (const auto& roiResult : imageResult.roiResults) {
+        if (!roiResult.passed) {
+            if (!roiSummary.isEmpty()) roiSummary += "; ";
+            roiSummary += QString("%1:%2").arg(roiResult.roiName, roiResult.failReason);
         }
-    );
+    }
+    emit logMessage(QString("[%1/%2] %3 -> %4 (%5)")
+        .arg(currentIndex + 1)
+        .arg(totalCount)
+        .arg(task.imageName)
+        .arg(status)
+        .arg(roiSummary.isEmpty() ? "OK" : roiSummary));
 
-    watcher->setFuture(future);
+    // 处理下一个任务
+    m_currentIndex++;
+    m_taskInFlight = false;
+    processNextTask();
 }
 
 void AutoDetectionController::finishDetection()

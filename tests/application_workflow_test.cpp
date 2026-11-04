@@ -9,6 +9,10 @@
 #include <QScrollBar>
 #include <QToolButton>
 #include <QDir>
+#include <QTemporaryDir>
+#include <QDoubleSpinBox>
+#include "controllers/roi_detection_config_controller.h"
+#include "core/roi_inspection_runner.h"
 #include <QPainter>
 #include <atomic>
 #include <limits>
@@ -46,15 +50,18 @@ struct WorkspaceFixture {
     QTreeWidget tree;
     TabManager tabManager{&tabs, &pipeline, &rois, &view, &status};
     RoiUiController roiUi{rois, &pipeline, &view, &status};
+    RoiDetectionConfigController itemConfig{rois};
     DetectionUiController detectionUi{rois, &tabs};
     ConfigController config{&pipeline, rois};
-    ProfileManager profiles{&rois, &pipeline};
+    QTemporaryDir profileDirectory;
+    ProfileManager profiles{&rois, &pipeline, nullptr, profileDirectory.path()};
     DisplayModeManager display{&tabs, &pipeline, &view};
     PipelineResultHandler results;
     InspectionSession session{&pipeline, &rois, &roiUi, &tabManager, &view, &display};
     DetectionWorkspace workspace{&tabs, &tabManager, &pipeline, rois, &view,
         &roiUi, &detectionUi, &config, &profiles, &display, &results};
     WorkspaceFixture() {
+        roiUi.setDetectionConfigController(&itemConfig);
         roiUi.setupTreeView(&tree);
         roiUi.setupDisplayConnections(&tabManager);
         results.setDependencies(&tabManager, &rois, &view, &pipeline);
@@ -76,6 +83,157 @@ struct WorkspaceFixture {
 class ApplicationWorkflowTest : public QObject {
     Q_OBJECT
 private slots:
+    void lineEditsSurviveSiblingSelectionConfigExportAndProfileReload() {
+        WorkspaceFixture f;
+        f.rois.switchToImage(f.addImage("parts"));
+        RoiConfig roi("part", QRectF(0, 0, 20, 20));
+        const DetectionItem first("first", DetectionType::Line), second("second", DetectionType::Line);
+        roi.detectionItems = {first, second};
+        f.rois.addRoiConfig(roi);
+        f.roiUi.activateDetectionItem(roi.roiId, first.itemId);
+        auto* line = f.tabManager.getTabAs<LineDetectTabWidget>("直线");
+        QVERIFY(line);
+        line->setReferenceLine({0, 0}, {15, 10});
+        line->findChild<QDoubleSpinBox*>("spin_angleThreshold")->setValue(27);
+        line->findChild<QDoubleSpinBox*>("spin_distanceThreshold")->setValue(9);
+        line->findChild<QSpinBox*>("spin_searchRegionWidth")->setValue(33);
+        f.pipeline.updateConfig([](PipelineConfig& c) { c.enhance.brightness = 37; });
+        f.roiUi.activateDetectionItem(roi.roiId, second.itemId);
+        line->setReferenceLine({4, 1}, {19, 16});
+        line->findChild<QDoubleSpinBox*>("spin_angleThreshold")->setValue(9);
+        f.pipeline.scheduler()->cancelAll();
+        f.roiUi.activateDetectionItem(roi.roiId, first.itemId);
+        const auto current = f.pipeline.getConfigSnapshot();
+        QCOMPARE(current.lineDetect.angleThreshold, 27.0);
+        QCOMPARE(current.lineDetect.distanceThreshold, 9.0);
+        QCOMPARE(current.lineDetect.searchRegionWidth, 33);
+        QCOMPARE(current.lineDetect.referenceLineStart, cv::Point2f(0, 0));
+        QCOMPARE(current.enhance.brightness, 37);
+        QCOMPARE(f.pipeline.scheduler()->pendingCount(), 0);
+
+        line->findChild<QDoubleSpinBox*>("spin_angleThreshold")->setValue(31);
+        const auto exported = f.config.currentConfiguration();
+        QTemporaryDir files;
+        const QString path = files.filePath("inspection.json");
+        QVERIFY(ConfigManager::instance().saveConfig(exported, path));
+        AppConfig restored;
+        QVERIFY(ConfigManager::instance().loadConfig(restored, path));
+        const auto configs = restored.roiExportData["images"].toObject()
+            [f.rois.getCurrentImageId()].toObject()["roiConfigs"].toArray();
+        RoiConfig persisted;
+        persisted.fromJson(configs.first().toObject());
+        const auto saved = persisted.getDetectionItem(first.itemId)->resolvedPipeline({});
+        QCOMPARE(saved.lineDetect.angleThreshold, 31.0);
+        QCOMPARE(saved.enhance.brightness, 37);
+        QCOMPARE(persisted.getDetectionItem(second.itemId)->resolvedPipeline({}).lineDetect.angleThreshold, 9.0);
+
+        line->findChild<QDoubleSpinBox*>("spin_angleThreshold")->setValue(35);
+        QVERIFY(f.profiles.saveCurrentAsProfile("roundtrip"));
+        ProfileManager reloaded(&f.rois, &f.pipeline, nullptr, f.profileDirectory.path());
+        const auto profile = reloaded.getProfile(f.profiles.activeProfileId());
+        QCOMPARE(profile.roiTemplates.size(), 1);
+        QCOMPARE(profile.roiTemplates.first().detectionItems.first().resolvedPipeline({}).lineDetect.angleThreshold, 35.0);
+        line->findChild<QPushButton*>("btn_clearReferenceLine")->click();
+        const auto* item = f.rois.getRoiConfig(roi.roiId)->getDetectionItem(first.itemId);
+        QVERIFY(!item->resolvedPipeline({}).lineDetect.referenceLineValid);
+    }
+
+    void roiRunnerExecutesSeparateSnapshotsAndAttributesFailures() {
+        RoiConfig roi("part", QRectF(0, 0, 20, 20));
+        for (int expected : {2, 5}) {
+            DetectionItem item(QString::number(expected), DetectionType::Blob);
+            PipelineConfig config;
+            config.enhance.brightness = expected;
+            config.judge.minRegionCount = expected;
+            config.judge.maxRegionCount = expected;
+            item.savePipeline(config);
+            roi.detectionItems.append(item);
+        }
+        auto disabled = roi.detectionItems.first();
+        disabled.enabled = false;
+        roi.detectionItems.append(disabled);
+        QList<int> calls;
+        auto execute = [&](const cv::Mat&, const PipelineConfig& config) {
+            calls.append(config.enhance.brightness);
+            PipelineContext result;
+            result.regionCount = config.enhance.brightness;
+            return result;
+        };
+        auto result = RoiInspectionRunner::run(roi, cv::Mat(20, 20, CV_8UC3), execute, {});
+        QVERIFY(result.passed);
+        QCOMPARE(calls, QList<int>({2, 5}));
+        QCOMPARE(result.itemResults.size(), 2);
+        QCOMPARE(result.regionCount, 7);
+        calls.clear();
+        result = RoiInspectionRunner::run(roi, cv::Mat(20, 20, CV_8UC3),
+            [&](const cv::Mat& image, const PipelineConfig& config) {
+                if (config.enhance.brightness == 2) throw std::runtime_error("first failed");
+                return execute(image, config);
+            }, {});
+        QVERIFY(!result.passed);
+        QCOMPARE(result.itemResults.first().itemId, roi.detectionItems.first().itemId);
+        QVERIFY(!result.itemResults.first().passed);
+        QVERIFY(result.itemResults.at(1).passed);
+        QCOMPARE(calls, QList<int>({5}));
+    }
+
+    void actualBatchUsesEachItemsSnapshot() {
+        RoiManager rois;
+        rois.setFullImage(cv::Mat(20, 20, CV_8UC3, cv::Scalar(0)));
+        RoiConfig roi("part", QRectF(0, 0, 20, 20));
+        for (int minimum : {0, 1}) {
+            DetectionItem item(QString::number(minimum), DetectionType::Blob);
+            PipelineConfig config;
+            config.stepEnabled.fill(false);
+            config.judge.minRegionCount = minimum;
+            config.judge.maxRegionCount = 2;
+            item.savePipeline(config);
+            roi.detectionItems.append(item);
+        }
+        rois.addRoiConfig(roi);
+        AutoDetectionController batch(&rois);
+        batch.startDetection();
+        QTRY_VERIFY_WITH_TIMEOUT(!batch.isRunning(), 10000);
+        QCOMPARE(batch.results().size(), 1);
+        const auto items = batch.results().first().itemResults;
+        QCOMPARE(items.size(), 2);
+        QVERIFY(items.first().passed);
+        QVERIFY(!items.at(1).passed);
+    }
+
+    void imageConfigsRoundTripAndLegacyCoordinatesStayInPixels() {
+        RoiManager rois;
+        const auto a = rois.addImage(cv::Mat(100, 200, CV_8UC3), "a");
+        const auto b = rois.addImage(cv::Mat(100, 200, CV_8UC3), "b");
+        PipelineConfig first, second;
+        first.enhance.brightness = 12;
+        second.enhance.brightness = -9;
+        rois.saveImagePipelineConfig(a, first);
+        rois.saveImagePipelineConfig(b, second);
+        rois.switchToImage(a);
+        RoiConfig roi("fractional pixels", QRectF(0.1, 0.2, 0.5, 0.6));
+        rois.addRoiConfig(roi);
+        const auto document = rois.exportAllConfigsToJson();
+        rois.saveImagePipelineConfig(a, {});
+        rois.importAllConfigsFromJson(document);
+        QCOMPARE(rois.loadImagePipelineConfig(a).enhance.brightness, 12);
+        QCOMPARE(rois.loadImagePipelineConfig(b).enhance.brightness, -9);
+        QCOMPARE(rois.getRoiConfigs().first().roiRect, roi.roiRect);
+
+        const auto profile = rois.exportAsProfile("scaled", QSize(200, 100));
+        const auto adapted = profile.roiTemplates.first().toRoiConfig(QSize(400, 200));
+        QCOMPARE(adapted.roiRect, QRectF(0.2, 0.4, 1.0, 1.2));
+        auto legacy = document.object();
+        auto images = legacy["images"].toObject();
+        auto image = images[a].toObject();
+        image.remove("pipelineConfig");
+        images[a] = image;
+        legacy["images"] = images;
+        rois.importAllConfigsFromJson(QJsonDocument(legacy));
+        QCOMPARE(rois.loadImagePipelineConfig(a).toJson(), PipelineConfig{}.toJson());
+        QCOMPARE(rois.getRoiConfigs().first().roiRect, roi.roiRect);
+    }
+
     void stepCardsReflowAndRepeatedSelectionKeepsOneLayout() {
         PipelineManager pipeline;
         StepConfigWidget page(&pipeline);

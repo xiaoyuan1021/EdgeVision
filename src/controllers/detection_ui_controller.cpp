@@ -1,11 +1,8 @@
-﻿#include "controllers/detection_ui_controller.h"
+#include "controllers/detection_ui_controller.h"
 #include "controllers/roi_ui_controller.h"
 #include "config/detection_config_types.h"
 #include "logger.h"
 #include "widgets/tab_manager.h"
-#include "widgets/judge_tab_widget.h"
-#include "widgets/barcode_tab_widget.h"
-#include "widgets/line_tab_widget.h"
 #include "widgets/object_detection_tab_widget.h"
 #include "widgets/ocr_tab_widget.h"
 
@@ -15,7 +12,6 @@
 #include <QLabel>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QApplication>
 #include <QSignalBlocker>
 
 DetectionUiController::DetectionUiController(
@@ -25,10 +21,6 @@ DetectionUiController::DetectionUiController(
     : QObject(parent)
     , m_roiManager(roiManager)
     , m_tabWidget(tabWidget)
-{
-}
-
-DetectionUiController::~DetectionUiController()
 {
 }
 
@@ -136,131 +128,30 @@ void DetectionUiController::onDeleteDetectionClicked(const QString& roiId, const
 void DetectionUiController::onDetectionItemSelected(const QString& roiId, const QString& detectionId,
                                                     TabManager* tabManager, PipelineManager* pipelineManager)
 {
-    RoiConfig* roi = m_roiManager.getRoiConfig(roiId);
+    auto* roi = m_roiManager.getRoiConfig(roiId);
     if (!roi) return;
+    const auto* detection = roi->getDetectionItem(detectionId);
+    if (!detection) return;
 
-    for (const auto& detection : roi->detectionItems) {
-        if (detection.itemId != detectionId) continue;
+    switchToTabConfig(TabConfig::getConfigForType(detection->type));
 
-        TabConfig config = TabConfig::getConfigForType(detection.type);
-        switchToTabConfig(config);
+    const auto selectedConfig = detection->resolvedPipeline(roi->pipelineConfig);
+    if (detection->type == DetectionType::Ocr) {
+        OcrDetectionConfig ocr;
+        ocr.fromJson(detection->config);
+        if (auto* tab = tabManager->getTabAs<OcrTabWidget>("文字识别"))
+            tab->setJudgmentConfig(ocr.expectedText, ocr.matchExact);
+    } else if (detection->type == DetectionType::ObjectDetection) {
+        if (auto* tab = tabManager->getTabAs<ObjectDetectionTabWidget>("目标检测"))
+            tab->setDetectionConfig(selectedConfig.objectDetection);
+    }
 
-        // 根据检测类型启用对应的Pipeline步骤
-        pipelineManager->updateConfig([&](PipelineConfig& pipelineConfig) {
-            pipelineConfig.objectDetectionApplyEnabled = false;
-            if (detection.type == DetectionType::Custom) return;
-            // 先禁用所有步骤
-            for (int i = 0; i < PipelineConfig::STEP_COUNT; ++i) {
-                pipelineConfig.stepEnabled[i] = false;
-            }
-
-            // 根据检测类型启用必要步骤
-            switch (detection.type) {
-                case DetectionType::Blob:
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::ColorChannel)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::Enhance)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::Filter)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::AlgorithmQueue)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::ShapeFilter)] = true;
-                    break;
-                case DetectionType::Line:
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::ColorChannel)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::Enhance)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::LineDetector)] = true;
-                    break;
-                case DetectionType::Barcode:
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::ColorChannel)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::Enhance)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::BarcodeRecognition)] = true;
-                    break;
-                case DetectionType::Ocr:
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::ColorChannel)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::Enhance)] = true;
-                    pipelineConfig.stepEnabled[static_cast<int>(StepType::OcrRecognition)] = true;
-                    break;
-                default:
-                    break;
-            }
-        });
-
-        // 重建Pipeline
-        pipelineManager->rebuildPipeline();
-
-        // [FIX]：将更新后的stepEnabled回写到ROI的pipelineConfig
-        // 否则图片切换时loadRoiPipelineConfig会用旧配置覆盖
-        roi->pipelineConfig = pipelineManager->getConfigSnapshot();
-
-        if (detection.type == DetectionType::Blob) {
-            BlobAnalysisConfig blobConfig;
-            blobConfig.fromJson(detection.config);
-            pipelineManager->updateConfig([&](PipelineConfig& cfg) {
-                cfg.judge.minRegionCount = blobConfig.minBlobCount;
-                cfg.judge.maxRegionCount = blobConfig.maxBlobCount;
-            });
-            if (auto* judgeTab = tabManager->getTabAs<JudgeTabWidget>("判定")) {
-                judgeTab->setJudgeConfig(
-                    blobConfig.minBlobCount,
-                    blobConfig.maxBlobCount,
-                    pipelineManager->getLastContext().regionCount
-                );
-            }
-        }
-
-        // [NOTE] 将检测项的独立配置同步到Pipeline全局配置，并更新Tab UI
-        if (detection.type == DetectionType::Barcode) {
-            BarcodeConfig barcodeCfg;
-            barcodeCfg.fromJson(detection.config);
-            pipelineManager->updateConfig([&](PipelineConfig& pipelineConfig) {
-                pipelineConfig.barcode = barcodeCfg;
-                pipelineConfig.enhance = barcodeCfg.enhance;
-            });
-            if (auto* barcodeTab = tabManager->getTabAs<BarcodeTabWidget>("条码")) {
-                barcodeTab->setBarcodeConfig(barcodeCfg);
-            }
-        }
-
-        if (detection.type == DetectionType::Line) {
-            LineDetectConfig lineCfg;
-            lineCfg.fromJson(detection.config);
-            pipelineManager->updateConfig([&](PipelineConfig& pipelineConfig) {
-                pipelineConfig.lineDetect = lineCfg;
-                pipelineConfig.enhance = lineCfg.enhance;
-            });
-            if (auto* lineTab = tabManager->getTabAs<LineDetectTabWidget>("直线")) {
-                lineTab->setLineConfig(lineCfg);
-            }
-        }
-
-        if (detection.type == DetectionType::Ocr) {
-            OcrDetectionConfig ocrCfg;
-            ocrCfg.fromJson(detection.config);
-            pipelineManager->updateConfig([&](PipelineConfig& pipelineConfig) {
-                pipelineConfig.ocr = ocrCfg.ocr;
-                pipelineConfig.enhance = ocrCfg.enhance;
-            });
-            if (auto* ocrTab = tabManager->getTabAs<OcrTabWidget>("文字识别")) {
-                ocrTab->setJudgmentConfig(ocrCfg.expectedText, ocrCfg.matchExact);
-            }
-        }
-
-        // [NOTE] 目标检测：从DetectionItem.config恢复配置到Tab UI
-        if (detection.type == DetectionType::ObjectDetection) {
-            ObjectDetectionConfig objCfg;
-            objCfg.fromJson(detection.config);
-            pipelineManager->updateConfig([&](PipelineConfig& cfg) { cfg.objectDetection = objCfg; });
-            if (auto* objTab = tabManager->getTabAs<ObjectDetectionTabWidget>("目标检测")) {
-                objTab->setDetectionConfig(objCfg);
-            }
-        }
-
-        // Render the complete selected item only after its snapshot is ready.
-        const auto selectedConfig = pipelineManager->getConfigSnapshot();
-        roi->pipelineConfig = selectedConfig;
-        for (auto* widget : tabManager->allTabs()) {
-            if (auto* configurable = dynamic_cast<IConfigurableTab*>(widget))
-                configurable->loadFromConfig(selectedConfig);
-        }
-        break;
+    pipelineManager->setConfig(selectedConfig);
+    pipelineManager->rebuildPipeline();
+    roi->pipelineConfig = selectedConfig;
+    for (auto* widget : tabManager->allTabs()) {
+        if (auto* configurable = dynamic_cast<IConfigurableTab*>(widget))
+            configurable->loadFromConfig(selectedConfig);
     }
 }
 
@@ -276,7 +167,7 @@ void DetectionUiController::switchToTabConfig(const TabConfig& config)
     // 阻塞信号，避免多次 setTabVisible / setCurrentIndex 触发中间状态的 onTabChanged
     const QSignalBlocker blocker(m_tabWidget);
 
-    // 用 tabText 直接比较，不依赖 m_tabNames 索引（避免索引不同步问题）
+    // 以页面名称匹配可见性；Tab 的实际顺序可以由用户拖动。
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         bool shouldShow = config.tabNames.contains(m_tabWidget->tabText(i));
         m_tabWidget->setTabVisible(i, shouldShow);
@@ -303,18 +194,10 @@ void DetectionUiController::switchToTabConfig(const TabConfig& config)
         }
     }
 
-    // blocker 析构后信号恢复，此时 QTabWidget 已处于正确状态
-    // 手动触发一次显示模式更新（因为 blockSignals 期间 onTabChanged 没有执行）
-    // 注意：这会在 DisplayModeManager 中根据当前 Tab 设置正确的显示模式
-    int currentIdx = m_tabWidget->currentIndex();
-    if (currentIdx >= 0) {
-        // 通过直接调用处理显示模式更新
-        QString tabName = m_tabWidget->tabText(currentIdx);
-        spdlog::info("[DetectionUi] Tab切换完成: {}", tabName.toStdString());
-    }
+
 }
 
-// ========== UI信号连接（从MainWindow迁移） ==========
+// ========== UI信号连接 ==========
 
 bool DetectionUiController::handleDeleteFromTree(QTreeWidget* treeWidget)
 {
@@ -348,19 +231,10 @@ void DetectionUiController::setupConnections(
     connect(this, &DetectionUiController::detectionAdded,
             roiController, &RoiUiController::activateDetectionItem);
 
-    // 检测项变更时刷新ROI树形视图
     connect(this, &DetectionUiController::detectionChanged,
-            this, [roiController]() {
-        if (roiController) {
-            roiController->refreshRoiTreeView();
-        }
-    });
+            roiController, &RoiUiController::refreshRoiTreeView);
+    if (ensureTabFunc) {
+        connect(this, &DetectionUiController::ensureTabNeeded, this, std::move(ensureTabFunc));
+    }
 
-    // Tab懒加载请求
-    connect(this, &DetectionUiController::ensureTabNeeded,
-            this, [ensureTabFunc](const QString& tabName) {
-        if (ensureTabFunc) {
-            ensureTabFunc(tabName);
-        }
-    });
 }

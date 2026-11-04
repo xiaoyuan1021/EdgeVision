@@ -8,8 +8,9 @@
 
 ProfileManager::ProfileManager(RoiManager* roiManager,
                                PipelineManager* pipelineManager,
-                               QObject* parent)
+                               QObject* parent, const QString& profilesRoot)
     : QObject(parent)
+    , m_profilesRoot(profilesRoot)
     , m_roiManager(roiManager)
     , m_pipelineManager(pipelineManager)
 {
@@ -20,7 +21,8 @@ ProfileManager::ProfileManager(RoiManager* roiManager,
 
 QString ProfileManager::profilesDirectory() const
 {
-    // 存储在应用程序目录下的 resources/profiles
+    if (!m_profilesRoot.isEmpty()) return m_profilesRoot;
+    // 默认使用应用程序目录下的 profiles。
     QString appDir = QCoreApplication::applicationDirPath();
     return appDir + "/profiles";
 }
@@ -70,6 +72,8 @@ bool ProfileManager::saveCurrentAsProfile(const QString& profileName,
 
     cv::Mat currentImage = m_roiManager->getFullImage();
     QSize imageSize(currentImage.cols, currentImage.rows);
+
+    emit snapshotRequested();
 
     // 从 RoiManager 导出方案
     InspectionProfile profile = m_roiManager->exportAsProfile(profileName, imageSize);

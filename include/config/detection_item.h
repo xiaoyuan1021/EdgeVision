@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include "detection_type.h"
 #include "detection_config_types.h"
+#include <optional>
 
 /**
  * @brief 检测项配置结构
@@ -54,6 +55,11 @@ struct DetectionItem {
                 break;
         }
     }
+
+    // Full preprocessing settings are optional for legacy files.
+    std::optional<PipelineConfig> pipelineSnapshot;
+    PipelineConfig resolvedPipeline(const PipelineConfig& fallback) const;
+    void savePipeline(const PipelineConfig& pipeline);
 
     // JSON 序列化（定义在 detection_item.cpp）
     QJsonObject toJson() const;

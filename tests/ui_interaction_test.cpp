@@ -214,16 +214,19 @@ private slots:
         barcodeConfig.timeout = 4321;
         barcode.config = barcodeConfig.toJson();
         DetectionItem custom("custom", DetectionType::Custom);
+        PipelineConfig customConfig;
+        customConfig.stepEnabled.fill(false);
+        customConfig.stepEnabled[7] = true;
+        custom.savePipeline(customConfig);
         roi.detectionItems = {barcode, custom};
         rois.addRoiConfig(roi);
         controller.onDetectionItemSelected(roi.roiId, barcode.itemId, &manager, &pipeline);
         auto* barcodeTab = manager.getTabAs<BarcodeTabWidget>("条码");
         QVERIFY(barcodeTab);
         QCOMPARE(barcodeTab->getBarcodeConfig().toJson(), barcodeConfig.toJson());
-        pipeline.updateConfig([](PipelineConfig& cfg) { cfg.stepEnabled[7] = true; });
-        const auto steps = pipeline.getConfigSnapshot().stepEnabled;
+        pipeline.updateConfig([](PipelineConfig& cfg) { cfg.stepEnabled[2] = true; });
         controller.onDetectionItemSelected(roi.roiId, custom.itemId, &manager, &pipeline);
-        QCOMPARE(pipeline.getConfigSnapshot().stepEnabled, steps);
+        QCOMPARE(pipeline.getConfigSnapshot().stepEnabled, customConfig.stepEnabled);
         controller.onDetectionItemSelected(roi.roiId, barcode.itemId, &manager, &pipeline);
         QStringList visible;
         for (int i = 0; i < tabs.count(); ++i)

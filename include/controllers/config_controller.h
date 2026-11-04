@@ -50,6 +50,9 @@ public:
      */
     void registerTabs(const QList<IConfigurableTab*>& tabs);
 
+    AppConfig currentConfiguration();
+    void applyConfiguration(const AppConfig& config);
+
     // 保存配置
     void saveConfig(QWidget* parentWidget);
 
@@ -57,15 +60,13 @@ public:
     void loadConfig(QWidget* parentWidget);
 
 signals:
+    void configurationCollected(const PipelineConfig& config);
     // 配置已应用信号
     void configApplied();
 
 private:
     // 通过 IConfigurableTab 接口从所有已注册 Tab 收集配置
     void collectConfigFromUI(AppConfig& config);
-
-    // 通过 IConfigurableTab 接口将配置应用到所有已注册 Tab
-    void applyConfigToUI(const AppConfig& config);
 
     PipelineManager* m_pipelineManager;
     RoiManager& m_roiManager;

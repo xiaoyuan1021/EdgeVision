@@ -11,7 +11,7 @@
 #include "data/roi_detection_result.h"
 #include "config/detection_config_types.h"
 #include "algorithm/image_utils.h"
-#include "algorithm/detection_evaluator.h"
+#include "core/roi_inspection_runner.h"
 #include "logger.h"
 #include <QFileDialog>
 #include <QMessageBox>
@@ -311,14 +311,12 @@ void BatchDetectionWidget::processNextImage()
                     if (roiRect.empty()) continue;
 
                     cv::Mat roiImage = image(roiRect).clone();
-                    PipelineContext ctx = PipelineExecutor::preprocess(roiImage, roiConfig.pipelineConfig);
 
-                    // [NOTE] 使用DetectionEvaluator评估该ROI的所有检测项（与auto_detection_controller一致）
-                    RoiDetectionResult roiResult = DetectionEvaluator::evaluateRoi(
-                        roiConfig, ctx, roiImage, ObjectDetectionService::detect);
+                    RoiDetectionResult roiResult = RoiInspectionRunner::run(
+                        roiConfig, roiImage, PipelineExecutor::preprocess, ObjectDetectionService::detect);
                     roiResult.imageId = imageId;
 
-                    // [NOTE] 关键修改：将ROI检测结果添加到图片级别的检测结果中
+                    // 将ROI检测结果添加到图片级别的检测结果中
                     imageResult.addRoiResult(roiResult);
                 }
 
@@ -346,7 +344,7 @@ void BatchDetectionWidget::processNextImage()
             item.passed = imageResult.passed;
             item.statusText = imageResult.passed ? "PASS" : QString("FAIL: %1").arg(imageResult.failReason);
 
-            // [NOTE] 为每个ROI生成独立的检测报告
+            // 为每个ROI生成独立的检测报告
             for (const auto& roiResult : imageResult.roiResults) {
                 DetectionResultReport report;
                 report.imageId = imageId;
@@ -379,7 +377,7 @@ void BatchDetectionWidget::processNextImage()
             m_ui->tableWidget_results->setItem(row, 2,
                 new QTableWidgetItem(imageResult.passed ? "✅ PASS" : "❌ FAIL"));
 
-            // [NOTE] 关键修改：显示每个ROI的独立结果
+            // 显示每个ROI的独立结果
             QString detail;
             for (const auto& roiResult : imageResult.roiResults) {
                 if (!detail.isEmpty()) detail += "\n";
@@ -414,7 +412,7 @@ void BatchDetectionWidget::processNextImage()
 
             emit imageResultReady(idx, imageName, imageResult.passed);
 
-            // [NOTE] 关键修改：记录日志，显示每个ROI的独立结果
+            // 记录日志，显示每个ROI的独立结果
             QString roiSummary;
             for (const auto& roiResult : imageResult.roiResults) {
                 if (!roiResult.passed) {

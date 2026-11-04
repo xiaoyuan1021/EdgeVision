@@ -1,4 +1,4 @@
-﻿#include "roi_manager.h"
+#include "roi_manager.h"
 #include "logger.h"
 #include "image_view.h"
 #include "algorithm/image_utils.h"
@@ -528,6 +528,7 @@ QJsonDocument RoiManager::exportAllConfigsToJson() const
         QJsonObject imageObj;
         imageObj["name"] = it.value().name;
         imageObj["filePath"] = it.value().filePath;
+        imageObj["pipelineConfig"] = it.value().pipelineConfig.toJson();
 
         QJsonArray configsArray;
         for (const auto& config : it.value().roiConfigs) {
@@ -557,6 +558,9 @@ void RoiManager::importAllConfigsFromJson(const QJsonDocument& doc)
                 ImageRois& imageRois = m_imageRoisMap[imageId];
                 imageRois.roiConfigs.clear();
 
+                imageRois.pipelineConfig = {};
+                if (imageObj["pipelineConfig"].isObject())
+                    imageRois.pipelineConfig.fromJson(imageObj["pipelineConfig"].toObject());
                 QJsonArray configsArray = imageObj["roiConfigs"].toArray();
                 for (const auto& val : configsArray) {
                     RoiConfig config;
@@ -607,7 +611,7 @@ QString RoiManager::generateNextRoiName() const
 
 QString RoiManager::generateDefaultRoiName()
 {
-    // 【Bug修复】统一使用generateNextRoiName，避免删除后编号重复
+    // 统一使用generateNextRoiName，避免删除后编号重复
     return generateNextRoiName();
 }
 

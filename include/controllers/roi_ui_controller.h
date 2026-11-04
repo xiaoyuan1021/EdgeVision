@@ -74,6 +74,7 @@ public:
 
     // 保存当前ROI的PipelineConfig（在切换ROI前调用）
     void saveCurrentRoiPipelineConfig();
+    void saveCurrentConfiguration(const PipelineConfig& config);
     
     // 加载指定ROI的PipelineConfig到PipelineManager
     void loadRoiPipelineConfig(const QString& roiId);

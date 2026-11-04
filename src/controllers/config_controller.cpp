@@ -43,8 +43,7 @@ void ConfigController::saveConfig(QWidget* parentWidget)
 
     if (filePath.isEmpty()) return;
 
-    AppConfig config;
-    collectConfigFromUI(config);
+    const auto config = currentConfiguration();
 
     if (ConfigManager::instance().saveConfig(config, filePath)) {
         spdlog::info("配置已保存到: " + filePath);
@@ -69,7 +68,7 @@ void ConfigController::loadConfig(QWidget* parentWidget)
 
     AppConfig config;
     if (ConfigManager::instance().loadConfig(config, filePath)) {
-        applyConfigToUI(config);
+        applyConfiguration(config);
         spdlog::info("配置已从: " + filePath + " 加载");
         QMessageBox::information(parentWidget, "成功", "配置已加载");
     } else {
@@ -86,6 +85,8 @@ void ConfigController::collectConfigFromUI(AppConfig& config)
     for (auto* tab : m_configurableTabs) {
         tab->saveToConfig(config.pipelineConfig);
     }
+
+    emit configurationCollected(config.pipelineConfig);
 
     // 收集 ROI 配置
     if (m_roiManager.isRoiActive()) {
@@ -117,7 +118,7 @@ void ConfigController::collectConfigFromUI(AppConfig& config)
     config.algorithmQueue = m_pipelineManager->getAlgorithmQueue();
 }
 
-void ConfigController::applyConfigToUI(const AppConfig& config)
+void ConfigController::applyConfiguration(const AppConfig& config)
 {
     // ====== 第一步：如果配置包含图片路径，先加载图片 ======
     QMap<QString, QString> filePathToNewId;
@@ -198,3 +199,10 @@ void ConfigController::applyConfigToUI(const AppConfig& config)
     emit configApplied();
 }
 
+
+AppConfig ConfigController::currentConfiguration()
+{
+    AppConfig config;
+    collectConfigFromUI(config);
+    return config;
+}

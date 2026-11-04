@@ -26,6 +26,8 @@ DetectionWorkspace::DetectionWorkspace(QTabWidget* tabs, TabManager* tabManager,
       m_detectionUiController(detectionUi), m_configController(config),
       m_profileManager(profiles), m_displayModeManager(display), m_pipelineResultHandler(results)
 {
+    connect(config, &ConfigController::configurationCollected, roiUi, &RoiUiController::saveCurrentConfiguration);
+    connect(profiles, &ProfileManager::snapshotRequested, roiUi, &RoiUiController::saveCurrentRoiPipelineConfig);
     connect(tabManager, &TabManager::tabCreated, this, &DetectionWorkspace::onTabCreated);
     detectionUi->setupConnections(roiUi,
         [this](const QString& name) { ensureTabExists(name); },

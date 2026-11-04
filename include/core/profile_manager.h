@@ -25,7 +25,8 @@ class ProfileManager : public QObject
 public:
     explicit ProfileManager(RoiManager* roiManager,
                             PipelineManager* pipelineManager,
-                            QObject* parent = nullptr);
+                            QObject* parent = nullptr,
+                            const QString& profilesRoot = {});
     ~ProfileManager() = default;
 
     // ==================== 方案管理 ====================
@@ -89,6 +90,7 @@ public:
     void setActiveProfile(const QString& profileId);
 
 signals:
+    void snapshotRequested();
     void profileSaved(const QString& profileId, const QString& profileName);
     void profileLoaded(const QString& profileId, const QString& profileName);
     void profileDeleted(const QString& profileId);
@@ -97,6 +99,7 @@ signals:
     void templateRemoved(const QString& profileId, const QString& templateName);
 
 private:
+    QString m_profilesRoot;
     /// 扫描方案目录，构建内存缓存
     void scanProfiles();
 

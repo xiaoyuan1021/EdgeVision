@@ -4,6 +4,51 @@
 class ConfigTest : public QObject {
     Q_OBJECT
 private slots:
+    void detectionSnapshotRoundTripPreservesIndependentPreprocessing() {
+        DetectionItem item("line", DetectionType::Line);
+        PipelineConfig config;
+        config.enhance.brightness = 42;
+        config.lineDetect.threshold = 83;
+        config.lineDetect.referenceLineValid = true;
+        config.lineDetect.referenceLineStart = {0, 0};
+        config.lineDetect.referenceLineEnd = {40, 70};
+        config.stepEnabled.fill(false);
+        config.stepEnabled[static_cast<int>(StepType::LineDetector)] = true;
+        item.savePipeline(config);
+        DetectionItem restored;
+        restored.fromJson(item.toJson());
+        auto resolved = restored.resolvedPipeline({});
+        QCOMPARE(resolved.enhance.brightness, 42);
+        QCOMPARE(resolved.lineDetect.threshold, 83);
+        QCOMPARE(resolved.lineDetect.referenceLineEnd, cv::Point2f(40, 70));
+        QCOMPARE(resolved.stepEnabled, config.stepEnabled);
+        auto edited = resolved.lineDetect;
+        edited.angleThreshold = 21;
+        restored.config = edited.toJson();
+        QCOMPARE(restored.resolvedPipeline({}).lineDetect.angleThreshold, 21.0);
+        auto legacy = item.toJson();
+        legacy.remove("pipelineSnapshot");
+        restored.fromJson(legacy);
+        QVERIFY(!restored.pipelineSnapshot);
+        QCOMPARE(restored.resolvedPipeline({}).lineDetect.threshold, 83);
+    }
+
+    void savingOcrSnapshotKeepsTextJudgment() {
+        DetectionItem item("ocr", DetectionType::Ocr);
+        OcrDetectionConfig judgment;
+        judgment.expectedText = "ABC123";
+        judgment.matchExact = true;
+        item.config = judgment.toJson();
+        PipelineConfig pipeline;
+        pipeline.enhance.brightness = -13;
+        item.savePipeline(pipeline);
+        OcrDetectionConfig restored;
+        restored.fromJson(item.config);
+        QCOMPARE(restored.expectedText, QString("ABC123"));
+        QVERIFY(restored.matchExact);
+        QCOMPARE(restored.enhance.brightness, -13);
+    }
+
     void legacyLineDefaults() {
         LineDetectConfig config;
         config.referenceLineStart = {5, 10};

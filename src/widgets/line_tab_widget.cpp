@@ -86,116 +86,44 @@ void LineDetectTabWidget::initialize()
 
     // 初始化参考线匹配控件状态
     m_ui->groupBox_referenceLine->setEnabled(true);
-    m_ui->spin_angleThreshold->setValue(15.0);
-    m_ui->spin_distanceThreshold->setValue(50.0);
-    m_ui->spin_searchRegionWidth->setValue(100);
-    updateReferenceLineStatus();
+    setLineState(m_pipeline ? m_pipeline->getConfigSnapshot().lineDetect : LineDetectConfig{});
 
 }
 
 void LineDetectTabWidget::onLineAlgorithmChanged(int value)
 {
-    switch (value) 
-    {
-    case 0: // HoughP
-        m_ui->stackedWidget_LineDetect->setCurrentIndex(1);
-        break;
-    case 1: // LSD
-        m_ui->stackedWidget_LineDetect->setCurrentIndex(0);
-        break;
-    case 2: // EDline
-        m_ui->stackedWidget_LineDetect->setCurrentIndex(0);
-        break;
-    default:
-        m_ui->stackedWidget_LineDetect->setCurrentIndex(0);
-    }
+    m_ui->stackedWidget_LineDetect->setCurrentIndex(value == 0 ? 1 : 0);
+    commitLineConfig(getLineState(), false);
 }
 
 void LineDetectTabWidget::onLineThresholdChanged(int value)
 {
-    if (!m_pipeline) return;
-    {
-        PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-        cfg.lineDetect.threshold = value;
-        m_pipeline->setConfig(cfg);
-    }
-    if (m_pipeline->getConfigSnapshot().lineDetect.enabled) {
-        if (m_onExecutePipeline) {
-            m_onExecutePipeline();
-        }
-    }
+    auto state = getLineState();
+    state.threshold = value;
+    commitLineConfig(state, state.enabled);
 }
 
 void LineDetectTabWidget::onLineMinLengthChanged(int value)
 {
-    if (!m_pipeline) return;
-    {
-        PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-        cfg.lineDetect.minLength = value;
-        m_pipeline->setConfig(cfg);
-    }
-    if (m_pipeline->getConfigSnapshot().lineDetect.enabled) {
-        if (m_onExecutePipeline) {
-            m_onExecutePipeline();
-        }
-    }
+    auto state = getLineState();
+    state.minLength = value;
+    commitLineConfig(state, state.enabled);
 }
 
 void LineDetectTabWidget::onLineMaxGapChanged(int value)
 {
-    if (!m_pipeline) return;
-    {
-        PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-        cfg.lineDetect.maxGap = value;
-        m_pipeline->setConfig(cfg);
-    }
-    if (m_pipeline->getConfigSnapshot().lineDetect.enabled) {
-        if (m_onExecutePipeline) {
-            m_onExecutePipeline();
-        }
-    }
+    auto state = getLineState();
+    state.maxGap = value;
+    commitLineConfig(state, state.enabled);
 }
 
 void LineDetectTabWidget::handleApply()
 {
     if (!m_pipeline) return;
-
-    LineDetectState state = getLineState();
-
-    // 更新Pipeline配置（使用快照模式，线程安全）
-    PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-    cfg.lineDetect.algorithm = state.algorithm;
-    cfg.lineDetect.threshold = state.threshold;
-    cfg.lineDetect.minLength = state.minLength;
-    cfg.lineDetect.maxGap = state.maxGap;
-    
-    // 判断是否启用参考线匹配模式
-    bool useReferenceLineMatch = cfg.lineDetect.enableReferenceLineMatch && cfg.lineDetect.referenceLineValid;
-    
-    if (useReferenceLineMatch) {
-        // 参考线匹配模式：禁用普通直线检测
-        cfg.lineDetect.enabled = false;
-        spdlog::info("使用参考线匹配模式检测直线");
-    } else {
-        // 普通直线检测模式
-        cfg.lineDetect.enabled = true;
-        // 如果用户勾选了参考线匹配但参考线无效，提示而不重置勾选状态
-        if (cfg.lineDetect.enableReferenceLineMatch && !cfg.lineDetect.referenceLineValid) {
-            m_ui->label_referenceLineStatus->setText(
-                "状态：参考线未绘制，已切换为普通直线检测模式\n请先绘制参考线再启用参考线匹配");
-            m_ui->label_referenceLineStatus->setStyleSheet("color: #F59E0B;");
-        }
-        spdlog::info("使用普通直线检测模式");
-    }
-    m_pipeline->setConfig(cfg);
-
-    // 设置显示模式为LineDetect
+    auto state = getLineState();
+    state.enabled = !(state.enableReferenceLineMatch && state.referenceLineValid);
     m_pipeline->setDisplayMode(DisplayConfig::Mode::LineDetect);
-
-    if (m_onExecutePipeline)
-    {
-        m_onExecutePipeline();
-    }
+    commitLineConfig(state, true);
 }
 
 LineDetectTabWidget::LineDetectState LineDetectTabWidget::getLineState() const
@@ -231,6 +159,7 @@ void LineDetectTabWidget::setLineState(const LineDetectState &state)
     m_ui->spin_angleThreshold->setValue(state.angleThreshold);
     m_ui->spin_distanceThreshold->setValue(state.distanceThreshold);
     m_ui->spin_searchRegionWidth->setValue(state.searchRegionWidth);
+    renderReferenceLineStatus(state);
 }
 
 void LineDetectTabWidget::setLineConfig(const LineDetectConfig& config)
@@ -242,30 +171,10 @@ void LineDetectTabWidget::setLineConfig(const LineDetectConfig& config)
 
 void LineDetectTabWidget::onReferenceLineEnabledChanged(bool enabled)
 {
-    if (!m_pipeline) return;
-
-    PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-
-    if (enabled && !cfg.lineDetect.referenceLineValid) {
-        // 启用参考线匹配但未绘制参考线，提示用户
-        m_ui->label_referenceLineStatus->setText(
-            "状态：请先点击\"绘制参考线\"按钮在图像上绘制参考线");
-        m_ui->label_referenceLineStatus->setStyleSheet("color: #F59E0B;");
-    } else {
-        m_ui->label_referenceLineStatus->setStyleSheet("");
-    }
-
-    cfg.lineDetect.enableReferenceLineMatch = enabled;
-    if (enabled) {
-        cfg.lineDetect.enabled = false;
-    }
-    m_pipeline->setConfig(cfg);
-
-    updateReferenceLineStatus();
-
-    if (m_onExecutePipeline) {
-        m_onExecutePipeline();
-    }
+    auto state = getLineState();
+    state.enableReferenceLineMatch = enabled;
+    if (enabled) state.enabled = false;
+    commitLineConfig(state, true);
 }
 
 void LineDetectTabWidget::onDrawReferenceLineClicked()
@@ -279,89 +188,55 @@ void LineDetectTabWidget::onDrawReferenceLineClicked()
 
 void LineDetectTabWidget::onClearReferenceLineClicked()
 {
-    if (!m_pipeline) return;
-
-    // 清除参考线数据
-    {
-        PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-        cfg.lineDetect.referenceLineValid = false;
-        cfg.lineDetect.referenceLineStart = cv::Point2f(0, 0);
-        cfg.lineDetect.referenceLineEnd = cv::Point2f(0, 0);
-        m_pipeline->setConfig(cfg);
-    }
-
-    updateReferenceLineStatus();
-
-    // 发射信号请求清除绘制
+    auto state = getLineState();
+    state.referenceLineValid = false;
+    state.referenceLineStart = {};
+    state.referenceLineEnd = {};
+    commitLineConfig(state, false);
     emit requestClearReferenceLine();
-
-    if (m_onExecutePipeline) {
-        m_onExecutePipeline();
-    }
+    if (m_onExecutePipeline) m_onExecutePipeline();
 }
 
 void LineDetectTabWidget::onAngleThresholdChanged(double value)
 {
-    if (!m_pipeline) return;
-
-    PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-    cfg.lineDetect.angleThreshold = value;
-    m_pipeline->setConfig(cfg);
-
-    if (cfg.lineDetect.enableReferenceLineMatch && cfg.lineDetect.referenceLineValid) {
-        if (m_onExecutePipeline) {
-            m_onExecutePipeline();
-        }
-    }
+    auto state = getLineState();
+    state.angleThreshold = value;
+    commitLineConfig(state, state.enableReferenceLineMatch && state.referenceLineValid);
 }
 
 void LineDetectTabWidget::onDistanceThresholdChanged(double value)
 {
-    if (!m_pipeline) return;
-
-    PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-    cfg.lineDetect.distanceThreshold = value;
-    m_pipeline->setConfig(cfg);
-
-    if (cfg.lineDetect.enableReferenceLineMatch && cfg.lineDetect.referenceLineValid) {
-        if (m_onExecutePipeline) {
-            m_onExecutePipeline();
-        }
-    }
+    auto state = getLineState();
+    state.distanceThreshold = value;
+    commitLineConfig(state, state.enableReferenceLineMatch && state.referenceLineValid);
 }
 
 void LineDetectTabWidget::onSearchRegionWidthChanged(int value)
 {
-    if (!m_pipeline) return;
-
-    PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-    cfg.lineDetect.searchRegionWidth = value;
-    m_pipeline->setConfig(cfg);
-
-    if (cfg.lineDetect.enableReferenceLineMatch && cfg.lineDetect.referenceLineValid) {
-        if (m_onExecutePipeline) {
-            m_onExecutePipeline();
-        }
-    }
+    auto state = getLineState();
+    state.searchRegionWidth = value;
+    commitLineConfig(state, state.enableReferenceLineMatch && state.referenceLineValid);
 }
 
 void LineDetectTabWidget::updateReferenceLineStatus()
 {
-    if (!m_pipeline || !m_ui) return;
+    if (m_pipeline) renderReferenceLineStatus(m_pipeline->getConfigSnapshot().lineDetect);
+}
 
-    PipelineConfig cfg = m_pipeline->getConfigSnapshot();
+void LineDetectTabWidget::renderReferenceLineStatus(const LineDetectConfig& state)
+{
     QString status;
 
-    if (!cfg.lineDetect.enableReferenceLineMatch) {
+    if (!state.enableReferenceLineMatch) {
         status = "状态：参考线匹配未启用";
-    } else if (!cfg.lineDetect.referenceLineValid) {
+    } else if (!state.referenceLineValid) {
         status = "状态：参考线未绘制\n点击\"绘制参考线\"按钮开始";
     } else {
         status = QString("状态：参考线已绘制\n起点:(%1,%2)\n终点:(%3,%4)")
-                     .arg(cfg.lineDetect.referenceLineStart.x, 0, 'f', 1)
-                     .arg(cfg.lineDetect.referenceLineStart.y, 0, 'f', 1)
-                     .arg(cfg.lineDetect.referenceLineEnd.x, 0, 'f', 1)
-                     .arg(cfg.lineDetect.referenceLineEnd.y, 0, 'f', 1);
+                     .arg(state.referenceLineStart.x, 0, 'f', 1)
+                     .arg(state.referenceLineStart.y, 0, 'f', 1)
+                     .arg(state.referenceLineEnd.x, 0, 'f', 1)
+                     .arg(state.referenceLineEnd.y, 0, 'f', 1);
     }
 
     m_ui->label_referenceLineStatus->setText(status);
@@ -375,21 +250,9 @@ void LineDetectTabWidget::connectSignals(const SignalContext& ctx,
     Q_UNUSED(onConfigSaved);
     m_onExecutePipeline = onExecutePipeline;
 
-    // [NOTE] 直线检测配置变化时同步到DetectionItem.config
-    auto syncToDetectionItem = [this, ctx]() {
-        if (ctx.roiCtrl) {
-            ctx.roiCtrl->updateLineDetectionConfig(getLineState());
-        }
-    };
-
-    connect(m_ui->comboBox_lineAlgorithm, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, syncToDetectionItem](int) { syncToDetectionItem(); });
-    connect(m_ui->Slider_HoughPThreshold, &QSlider::valueChanged,
-            this, [this, syncToDetectionItem](int) { syncToDetectionItem(); });
-    connect(m_ui->Slider_HoughPMinLineLength, &QSlider::valueChanged,
-            this, [this, syncToDetectionItem](int) { syncToDetectionItem(); });
-    connect(m_ui->Slider_HoughPMaxLineGap, &QSlider::valueChanged,
-            this, [this, syncToDetectionItem](int) { syncToDetectionItem(); });
+    if (ctx.roiCtrl)
+        connect(this, &LineDetectTabWidget::lineConfigEdited,
+                ctx.roiCtrl, &RoiUiController::updateLineDetectionConfig);
 
     connect(this, &LineDetectTabWidget::requestDrawReferenceLine,
             ctx.view, &ImageView::startReferenceLineDrawing);
@@ -401,29 +264,17 @@ void LineDetectTabWidget::connectSignals(const SignalContext& ctx,
 
 void LineDetectTabWidget::setReferenceLine(const cv::Point2f& start, const cv::Point2f& end)
 {
-    if (!m_pipeline) return;
-
-    {
-        PipelineConfig cfg = m_pipeline->getConfigSnapshot();
-        cfg.lineDetect.referenceLineStart = start;
-        cfg.lineDetect.referenceLineEnd = end;
-        cfg.lineDetect.referenceLineValid = true;
-        cfg.lineDetect.enableReferenceLineMatch = true;
-        cfg.lineDetect.enabled = false;
-        m_pipeline->setConfig(cfg);
-    }
-
-    updateReferenceLineStatus();
-
-    // 自动启用参考线匹配
+    auto state = getLineState();
+    state.referenceLineStart = start;
+    state.referenceLineEnd = end;
+    state.referenceLineValid = true;
+    state.enableReferenceLineMatch = true;
+    state.enabled = false;
     {
         const QSignalBlocker blocker(m_ui->chk_enableReferenceLine);
         m_ui->chk_enableReferenceLine->setChecked(true);
     }
-
-    if (m_onExecutePipeline) {
-        m_onExecutePipeline();
-    }
+    commitLineConfig(state, true);
 }
 
 void LineDetectTabWidget::updateMatchResultStatus(int matchedCount, int totalCount, double angleThreshold, double distanceThreshold, bool isReferenceMode)
@@ -460,3 +311,15 @@ void LineDetectTabWidget::updateMatchResultStatus(int matchedCount, int totalCou
     m_ui->label_referenceLineStatus->setText(status);
 }
 
+
+void LineDetectTabWidget::commitLineConfig(LineDetectConfig state, bool execute)
+{
+    if (!m_pipeline) return;
+    auto config = m_pipeline->getConfigSnapshot();
+    state.enhance = config.enhance;
+    config.lineDetect = state;
+    m_pipeline->setConfig(config);
+    emit lineConfigEdited(state);
+    renderReferenceLineStatus(state);
+    if (execute && m_onExecutePipeline) m_onExecutePipeline();
+}

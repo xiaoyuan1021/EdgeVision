@@ -78,6 +78,7 @@ set(HEADERS
     include/core/pipeline_steps.h
     include/core/profile_manager.h
     include/core/roi_manager.h
+    include/core/roi_inspection_runner.h
     include/core/video_manager.h
     include/core/barcode_step.h
     include/core/i_pipeline_access.h
@@ -188,6 +189,7 @@ set(SOURCES
     src/core/pipeline_steps.cpp
     src/core/profile_manager.cpp
     src/core/roi_manager.cpp
+    src/core/roi_inspection_runner.cpp
     src/core/video_manager.cpp
     src/core/barcode_step.cpp
     src/core/pipeline_image_filter_steps.cpp
