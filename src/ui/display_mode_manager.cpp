@@ -1,4 +1,4 @@
-﻿#include "display_mode_manager.h"
+#include "display_mode_manager.h"
 #include "core/pipeline_manager.h"
 #include "ui/image_view.h"
 #include "widgets/tab_registry.h"
@@ -33,10 +33,7 @@ void DisplayModeManager::onTabChanged(int index)
     DisplayConfig::Mode newMode = getModeForTab(index);
     if (newMode != m_lastMode) {
         m_lastMode = newMode;
-        if (!displayCurrentResult()) {
-            // [FIX] 无缓存结果时显示原图，不触发 pipeline 执行
-            // emit requestRefresh();
-        }
+        displayCurrentResult();
     }
 }
 
@@ -59,17 +56,13 @@ void DisplayModeManager::applyModeForCurrentTab()
     m_pipelineManager->setDisplayMode(mode);
 }
 
-bool DisplayModeManager::displayCurrentResult()
+void DisplayModeManager::displayCurrentResult()
 {
-    if (!m_pipelineManager->hasLastResult()) {
-        spdlog::info("[DisplayMode] displayCurrentResult: 无缓存结果，需触发Pipeline");
-        return false;  // 需要触发完整Pipeline处理
-    }
+    if (!m_pipelineManager->hasLastResult()) return;
     DisplayConfig::Mode mode = getModeForTab(m_tabWidget->currentIndex());
     cv::Mat displayImage = m_pipelineManager->getLastDisplayWithMode(mode);
     if (!displayImage.empty()) {
         spdlog::debug("[DisplayMode] displayCurrentResult: 使用缓存渲染, mode={} size={}x{}", static_cast<int>(mode), displayImage.cols, displayImage.rows);
-        m_view->setImage(ImageUtils::matToQImage(displayImage));
+        m_view->setImageKeepZoom(ImageUtils::matToQImage(displayImage));
     }
-    return true;
 }

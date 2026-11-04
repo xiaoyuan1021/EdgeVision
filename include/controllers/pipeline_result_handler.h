@@ -18,7 +18,7 @@ public:
     
     void setDependencies(TabManager* tabManager, RoiManager* roiManager, ImageView* imageView, PipelineManager* pipelineManager);
 
-    /// 设置视频处理模式（视频帧使用 ONNX Runtime 推理，静图使用 OpenCV DNN）
+    /// 设置流式结果策略：允许同一会话的较早帧显示，不写入静态 ROI 缓存
     void setVideoMode(bool active);
 
 signals:

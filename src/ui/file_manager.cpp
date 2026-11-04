@@ -1,4 +1,4 @@
-﻿#include "file_manager.h"
+#include "file_manager.h"
 #include "pipeline_manager.h"
 #include "logger.h"
 #include "utils/path_utils.h"
@@ -18,7 +18,7 @@ FileManager::~FileManager()
 
 QString FileManager::selectImageFile(const QString& defaultPath)
 {
-    // [NOTE] 默认打开images文件夹
+    // 默认打开images文件夹
     QString startPath = defaultPath;
     if (startPath.isEmpty()) {
         // 优先使用项目根目录下的images文件夹

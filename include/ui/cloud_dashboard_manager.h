@@ -16,7 +16,6 @@ class ToastNotification;
  * 2. 启动/停止 Python 看板进程
  * 3. 打开浏览器访问看板
  *
- * 从 MainWindow 中提取，降低 MainWindow 的职责复杂度。
  */
 class CloudDashboardManager : public QObject
 {

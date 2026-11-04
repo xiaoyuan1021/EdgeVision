@@ -286,8 +286,8 @@ void VideoTabWidget::connectSignals(const SignalContext& ctx,
                     rm->setVideoFrame(frame);
                     view->clearRoi();
                     // 直接将视频帧显示到画布上
-                    view->setImage(ImageUtils::matToQImage(frame));
-                    // 设置脏标记并立即触发Pipeline处理
+                    view->setImageKeepZoom(ImageUtils::matToQImage(frame));
+                    // 提交当前帧的预览处理
                     onExecutePipeline();
                 }
             });

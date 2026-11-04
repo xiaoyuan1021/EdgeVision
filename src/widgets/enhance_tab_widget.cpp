@@ -212,7 +212,7 @@ void EnhanceTabWidget::previewEnhance()
         cv::cvtColor(lab, result, cv::COLOR_Lab2BGR);
     }
 
-    m_view->setImage(ImageUtils::matToQImage(result));
+    m_view->setImageKeepZoom(ImageUtils::matToQImage(result));
 }
 
 EnhanceTabWidget::~EnhanceTabWidget()

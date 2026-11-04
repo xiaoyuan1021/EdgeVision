@@ -43,22 +43,6 @@ public:
      */
     void refresh();
 
-signals:
-    /**
-     * @brief 图片切换后需要显示图像
-     */
-    void imageDisplayRequested(const cv::Mat& img);
-
-    /**
-     * @brief 需要重新处理图像
-     */
-    void processRequested();
-
-    /**
-     * @brief 图片被删除后触发
-     */
-    void imageRemoved();
-
 private slots:
     void onAddClicked();
     void onRemoveClicked();

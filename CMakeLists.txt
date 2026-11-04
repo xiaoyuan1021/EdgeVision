@@ -127,6 +127,7 @@ set(HEADERS
     include/ui/display_mode_manager.h
     include/ui/file_manager.h
     include/ui/image_view.h
+    include/ui/image_view_controls.h
     include/ui/log_page.h
     include/ui/mainwindow.h
     include/ui/slider_spinbox_binder.h
@@ -169,7 +170,6 @@ set(HEADERS
     # utils
     include/utils/path_utils.h
     include/utils/benchmark.h
-    include/utils/model_warmup.h
 )
 
 set(SOURCES
@@ -216,6 +216,9 @@ set(SOURCES
     src/ui/display_mode_manager.cpp
     src/ui/file_manager.cpp
     src/ui/image_view.cpp
+    src/ui/image_view_drawing.cpp
+    src/ui/image_view_viewport.cpp
+    src/ui/image_view_controls.cpp
     src/ui/log_page.cpp
     src/ui/mainwindow.cpp
     src/ui/system_monitor.cpp
@@ -251,8 +254,6 @@ set(SOURCES
     src/controllers/profile_controller.cpp
     src/controllers/roi_ui_controller.cpp
     src/controllers/roi_detection_config_controller.cpp
-    # utils
-    src/utils/model_warmup.cpp
 )
 
 set(FORMS

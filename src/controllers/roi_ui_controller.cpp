@@ -1,4 +1,4 @@
-﻿#include "controllers/roi_ui_controller.h"
+#include "controllers/roi_ui_controller.h"
 #include "controllers/roi_detection_config_controller.h"
 #include "roi_config.h"
 #include "logger.h"
@@ -64,11 +64,9 @@ void RoiUiController::setupTreeView(QTreeWidget* treeView)
         // 更新当前选中的ROI为新创建的ROI
         m_currentSelectedRoiId = roi.roiId;
         
-        // 退出ROI绘制模式并清理ROI显示
-        m_view->finishRoiMode();
         m_roiManager.setActiveRoi(roi.roiId);
         
-        // 【P1修复】更新状态栏，清除"请按下左键绘制ROI"的提示
+        // 发布已完成的操作；绘制中的提示由画布工具条负责。
         if (m_statusBar) {
             m_statusBar->showMessage(
                 QString("ROI已添加: %1 (x=%2 y=%3 w=%4 h=%5)")
@@ -99,8 +97,6 @@ void RoiUiController::setupTreeView(QTreeWidget* treeView)
 void RoiUiController::enterRoiDrawMode()
 {
     m_view->setRoiMode(true);
-    m_view->setDragMode(QGraphicsView::NoDrag);
-    if (m_statusBar) m_statusBar->showMessage("请按下左键绘制ROI");
 }
 
 void RoiUiController::removeRoiAndRefresh(const QString& roiId)
@@ -172,7 +168,7 @@ QString RoiUiController::addFullImageRoi(bool silent)
     emit roiDisplayChanged(m_currentSelectedRoiId);
     m_view->resetZoom();
 
-    // [FIX] silent 模式下不触发 Pipeline 执行
+    // silent 模式下不触发 Pipeline 执行
     if (!silent) {
         emit roiChanged();
     }
@@ -240,7 +236,7 @@ void RoiUiController::onSwitchRoiClicked()
         m_view->resetZoom();
         m_view->setImage(ImageUtils::matToQImage(m_roiManager.getFullImage()));
         
-        // 【P1修复】纯显示切换，不触发Pipeline处理
+        // 纯显示切换，不触发Pipeline处理
         emit fullImageDisplayRequested();
         spdlog::info("已切换到原图模式");
     } else {
@@ -264,7 +260,7 @@ void RoiUiController::onSwitchRoiClicked()
         // 已知ROI ID时直接使用setActiveRoi，避免setRoi的矩形匹配问题
         m_roiManager.setActiveRoi(m_currentSelectedRoiId);
         
-        // 【P1修复】纯显示切换，不触发Pipeline处理
+        // 纯显示切换，不触发Pipeline处理
         emit roiDisplayChanged(m_currentSelectedRoiId);
         spdlog::info(QString("已切换到ROI模式: %1 (通过ID激活)").arg(roi->roiName));
     }
@@ -431,12 +427,10 @@ void RoiUiController::handleRoiSelection(const QString& roiId)
     if (roi) {
         m_view->clearRoi();
         m_roiManager.setActiveRoi(roi->roiId);
-        // [NOTE] 纯显示切换，不触发pipeline（用缓存结果渲染）
+        // 纯显示切换，不触发pipeline（用缓存结果渲染）
         emit roiDisplayChanged(m_currentSelectedRoiId);
 
-        // [REFACTOR] handleRoiSelection 不再负责触发 Tab 切换
-        // 调用方（onRoiTreeItemClicked / autoSelectFirstDetectionItem 等）
-        // 按需调用 activateDetectionItem()
+        // 这里只更新 ROI 显示；调用方通过 activateDetectionItem 选择对应页面。
 
         spdlog::info(QString("已选中ROI: %1 (通过ID激活)").arg(roi->roiName));
     }
@@ -663,7 +657,7 @@ bool RoiUiController::autoSelectFirstDetectionItem()
     return false;
 }
 
-// ========== 显示信号连接（从MainWindow迁移） ==========
+// ========== 显示信号连接 ==========
 
 void RoiUiController::setupDisplayConnections(TabManager* tabManager)
 {
@@ -672,7 +666,7 @@ void RoiUiController::setupDisplayConnections(TabManager* tabManager)
             this, [this](const QString& roiId) {
         cv::Mat displayImage;
 
-        // [NOTE] 优先从per-ROI缓存获取Pipeline处理后的结果
+        // 优先从per-ROI缓存获取Pipeline处理后的结果
         if (m_pipelineManager && m_pipelineManager->hasCachedResult(roiId)) {
             displayImage = m_pipelineManager->getCachedDisplay(
                 roiId, m_pipelineManager->getDisplayMode());

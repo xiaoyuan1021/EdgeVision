@@ -9,6 +9,8 @@
 #include "core/mqtt_manager.h"
 #include "config/constants.h"
 #include "ui/image_view.h"
+#include "ui/image_view_controls.h"
+#include <QTabBar>
 #include "ui/system_monitor.h"
 #include "ui/file_manager.h"
 #include "ui/log_page.h"
@@ -25,7 +27,6 @@
 #include "controllers/pipeline_result_handler.h"
 #include "controllers/profile_controller.h"
 #include <QFile>
-#include <QDir>
 #include <QFileDialog>
 #include <QPropertyAnimation>
 #include <QGraphicsOpacityEffect>
@@ -52,6 +53,7 @@ MainWindow::MainWindow(QWidget *parent, std::optional<MqttConfig> mqttConfig)
     connect(m_session, &InspectionSession::imageSessionChanged, m_workspace, &DetectionWorkspace::restoreTabVisibility);
     connect(m_workspace, &DetectionWorkspace::refreshRequested, m_session, &InspectionSession::requestRefresh);
     connect(m_session, &InspectionSession::statusMessage, ui->statusbar, &QStatusBar::showMessage);
+    setupConnections();
     setupControllerConnections();
     m_mqttManager = new MqttManager(this);
     m_remoteController = new RemoteInspectionController(m_mqttManager, m_autoDetectionController,
@@ -92,7 +94,6 @@ void MainWindow::setupBasicInfrastructure()
     m_pageFadeAnimation->setStartValue(0.0);
     m_pageFadeAnimation->setEndValue(1.0);
     m_pageFadeAnimation->setEasingCurve(QEasingCurve::OutCubic);
-    setupConnections();
 
     // 系统监控
     m_systemMonitor->setupWithStatusBar(ui->statusbar, AppConstants::SYSTEM_MONITOR_INTERVAL_MS);
@@ -103,10 +104,6 @@ void MainWindow::setupBasicInfrastructure()
     m_timingLabel->setText("<img src=':/icons/pipeline.png' width='16' height='16' style='vertical-align: middle;'> Pipeline: -- ms");
     ui->statusbar->insertPermanentWidget(0, m_timingLabel);
     // 计时由 PipelineResultHandler::pipelineTimingUpdated 信号驱动（实时更新）
-
-    // 日志初始化
-    QString logDir = PROJECT_ROOT_DIR "/logs";
-    QDir(logDir).mkpath(".");
 
     // Initialize LogPage (creates spdlog sinks: UI + rotating file)
     ui->page_log->initialize();
@@ -121,6 +118,14 @@ void MainWindow::setupUI()
         qApp->setStyleSheet(QLatin1String(file.readAll()));
     }
 
+    ui->verticalLayout_imagePanel->insertWidget(0, new ImageViewControls(m_view, ui->widget_imagePanel));
+    ui->splitter_main->setStretchFactor(0, 0);
+    ui->splitter_main->setStretchFactor(1, 1);
+    ui->splitter_main->setStretchFactor(2, 0);
+    ui->splitter_main->setSizes({260, 760, 380});
+    ui->tabWidget->setUsesScrollButtons(true);
+    ui->tabWidget->tabBar()->setExpanding(false);
+
     // Toast 浮标（叠加在图像视图上）
     m_toast = new ToastNotification(m_view);
 }
@@ -128,19 +133,19 @@ void MainWindow::setupUI()
 void MainWindow::setupConnections()
 {
     connect(ui->tabWidget, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
-    connect(ui->btn_pipelineConfig, &QPushButton::clicked, this, &MainWindow::onPipelineConfigClicked);
-    connect(ui->btn_addROI, &QPushButton::clicked, this, &MainWindow::onAddRoiClicked);
-    connect(ui->btn_deleteROI, &QPushButton::clicked, this, &MainWindow::onDeleteRoiClicked);
-    connect(ui->btn_switchROI, &QPushButton::clicked, this, &MainWindow::onSwitchRoiClicked);
+    connect(ui->btn_pipelineConfig, &QPushButton::clicked, m_workspace, &DetectionWorkspace::openPipelineConfig);
+    connect(ui->btn_addROI, &QPushButton::clicked, m_roiUiController, &RoiUiController::onAddRoiClicked);
+    connect(ui->btn_deleteROI, &QPushButton::clicked, m_roiUiController, &RoiUiController::onDeleteRoiClicked);
+    connect(ui->btn_switchROI, &QPushButton::clicked, m_roiUiController, &RoiUiController::onSwitchRoiClicked);
     connect(ui->btn_Log, &QPushButton::clicked, this, &MainWindow::onLogClicked);
     connect(ui->btn_Home, &QPushButton::clicked, this, &MainWindow::onHomeClicked);
     connect(ui->btn_saveConfig, &QPushButton::clicked, this, &MainWindow::onSaveConfigClicked);
     connect(ui->btn_importConfig, &QPushButton::clicked, this, &MainWindow::onImportConfigClicked);
-    connect(ui->btn_startAutoDetection, &QPushButton::clicked, this, &MainWindow::onStartAutoDetectionClicked);
-    connect(ui->btn_stopAutoDetection, &QPushButton::clicked, this, &MainWindow::onStopAutoDetectionClicked);
-    connect(ui->btn_cloudPlatform, &QPushButton::clicked, this, &MainWindow::onCloudPlatformClicked);
-    connect(ui->btn_saveToProfile, &QPushButton::clicked, this, &MainWindow::onSaveToProfileClicked);
-    connect(ui->btn_loadFromProfile, &QPushButton::clicked, this, &MainWindow::onLoadFromProfileClicked);
+    connect(ui->btn_startAutoDetection, &QPushButton::clicked, this, &MainWindow::startAutoDetection);
+    connect(ui->btn_stopAutoDetection, &QPushButton::clicked, m_autoDetectionController, &AutoDetectionController::stopDetection);
+    connect(ui->btn_cloudPlatform, &QPushButton::clicked, m_cloudDashboardManager, &CloudDashboardManager::launch);
+    connect(ui->btn_saveToProfile, &QPushButton::clicked, m_profileController, &ProfileController::saveToProfile);
+    connect(ui->btn_loadFromProfile, &QPushButton::clicked, m_profileController, &ProfileController::loadFromProfile);
     connect(ui->btn_importFolder, &QPushButton::clicked, this, &MainWindow::onImportFolderClicked);
 
     connect(m_fileManager, &FileManager::imageLoaded, this,
@@ -166,7 +171,7 @@ void MainWindow::setupConnections()
         });
 }
 
-void MainWindow::animatePageSwitch(int, int toIndex)
+void MainWindow::animatePageSwitch(int toIndex)
 {
     if (ui->stackedWidget_main->currentIndex() == toIndex) return;
     auto* page = ui->stackedWidget_main->widget(toIndex);
@@ -188,14 +193,10 @@ void MainWindow::setupManagers()
     m_tabManager = new TabManager(ui->tabWidget, m_pipelineManager, &m_roiManager,
                                    m_view, statusBar(), this);
 
-    // 创建云平台看板管理器
     m_cloudDashboardManager = new CloudDashboardManager(m_toast, this);
 
-    // 创建显示模式管理器
     m_displayModeManager = new DisplayModeManager(ui->tabWidget, m_pipelineManager, m_view, this);
-    connect(m_displayModeManager, &DisplayModeManager::requestRefresh, this, &MainWindow::requestRefresh);
 
-    // 创建检测方案管理器
     m_profileManager = new ProfileManager(&m_roiManager, m_pipelineManager, this);
 
     m_imageListManager = new ImageListManager(m_roiManager, m_fileManager, this, this);
@@ -205,7 +206,6 @@ void MainWindow::setupManagers()
 
 void MainWindow::setupControllers()
 {
-    // 创建控制器
     m_roiDetectionConfigController = new RoiDetectionConfigController(m_roiManager, this);
     m_roiUiController = new RoiUiController(m_roiManager, m_pipelineManager, m_view, ui->statusbar, this);
     m_roiUiController->setDetectionConfigController(m_roiDetectionConfigController);
@@ -216,7 +216,6 @@ void MainWindow::setupControllers()
                                                 m_pipelineManager, m_tabManager,
                                                 m_roiUiController, m_toast, this, this);
 
-    // 初始化控制器 UI
     // 检测状态标签（创建并放置到状态栏）
     auto* detectionStatusLabel = new QLabel("");
     detectionStatusLabel->setObjectName("label_detectionStatus");
@@ -236,7 +235,7 @@ void MainWindow::setupControllerConnections()
     connect(m_roiUiController, &RoiUiController::roiChanged, m_session, &InspectionSession::requestRefresh);
     connect(m_configController, &ConfigController::configApplied, this, [this] {
         m_roiManager.saveImagePipelineConfig(m_roiManager.getCurrentImageId(), m_pipelineManager->getConfigSnapshot());
-        requestRefresh();
+        m_session->requestRefresh();
     });
     connect(m_profileController, &ProfileController::requestRefresh, m_session, &InspectionSession::requestRefresh);
     connect(m_autoDetectionController, &AutoDetectionController::detectionFinished, this, [this](const DetectionStats&) {
@@ -251,11 +250,9 @@ void MainWindow::setupResultHandler()
     m_pipelineResultHandler = new PipelineResultHandler(this);
     m_pipelineResultHandler->setDependencies(m_tabManager, &m_roiManager, m_view, m_pipelineManager);
 
-    // 连接调度器信号到结果处理器
     connect(m_pipelineManager->scheduler(), &PipelineScheduler::finished,
             m_pipelineResultHandler, &PipelineResultHandler::onPipelineResult);
 
-    // 执行状态变化时更新UI
     connect(m_pipelineManager->scheduler(), &PipelineScheduler::processingChanged,
             this, [this](bool processing) {
         if (processing) {
@@ -266,27 +263,11 @@ void MainWindow::setupResultHandler()
     connect(m_pipelineResultHandler, &PipelineResultHandler::statusMessage,
             ui->statusbar, &QStatusBar::showMessage);
 
-    // 连接Pipeline计时信号，实时更新状态栏
     connect(m_pipelineResultHandler, &PipelineResultHandler::pipelineTimingUpdated,
             this, [this](double totalMs) {
         m_timingLabel->setText(QString("Pipeline: %1 ms").arg(totalMs, 0, 'f', 1));
     });
 }
-
-void MainWindow::processAndDisplay() { requestRefresh(); }
-
-void MainWindow::showImage(const cv::Mat& image) { m_session->showImage(image); }
-
-void MainWindow::onPipelineConfigClicked() { m_workspace->openPipelineConfig(); }
-
-void MainWindow::onCloudPlatformClicked()
-{
-    m_cloudDashboardManager->launch();
-}
-
-void MainWindow::onAddRoiClicked()      { m_roiUiController->onAddRoiClicked(); }
-void MainWindow::onDeleteRoiClicked()   { m_roiUiController->onDeleteRoiClicked(); }
-void MainWindow::onSwitchRoiClicked()   { m_roiUiController->onSwitchRoiClicked(); }
 
 void MainWindow::onTabChanged(int index)
 {
@@ -298,12 +279,12 @@ void MainWindow::onTabChanged(int index)
 
 void MainWindow::onLogClicked()
 {
-    animatePageSwitch(0, 1);
+    animatePageSwitch(1);
 }
 
 void MainWindow::onHomeClicked()
 {
-    animatePageSwitch(1, 0);
+    animatePageSwitch(0);
 }
 
 void MainWindow::onSaveConfigClicked()  { m_configController->saveConfig(this); }
@@ -313,28 +294,6 @@ void MainWindow::startAutoDetection()
 {
     m_roiUiController->saveCurrentRoiPipelineConfig();
     m_autoDetectionController->startDetection();
-}
-
-void MainWindow::onStartAutoDetectionClicked()
-{
-    startAutoDetection();
-}
-
-void MainWindow::onStopAutoDetectionClicked()
-{
-    m_autoDetectionController->stopDetection();
-}
-
-void MainWindow::requestRefresh() { if (!m_isDestroying) m_session->requestRefresh(); }
-
-void MainWindow::onSaveToProfileClicked()
-{
-    m_profileController->saveToProfile();
-}
-
-void MainWindow::onLoadFromProfileClicked()
-{
-    m_profileController->loadFromProfile();
 }
 
 void MainWindow::onImportFolderClicked()

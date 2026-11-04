@@ -1,4 +1,4 @@
-﻿#include "pipeline_steps.h"
+#include "pipeline_steps.h"
 #include "opencv_algorithm.h"
 #include "logger.h"
 #include <opencv2/line_descriptor.hpp>
@@ -530,7 +530,7 @@ static void detectLinesEDlines(const cv::Mat& src, std::vector<cv::Vec4f>& lines
         // [BUG WORKAROUND] EDLine (opencv_contrib line_descriptor) 存在已知 bug:
         // EdgeDrawing() 中缓冲区按 pixelNum/5 分配，但写入时不检查边界，
         // 越界后才检测并 return -1，但堆已被破坏 (opencv_contrib#1999)。
-        // 修复: 预估边像素密度，超限时缩图，确保边像素数 < edgePixelArraySize。
+        // 预估边像素密度并在超限时缩图，避免超过 EdgeDrawing 的固定容量。
         cv::Mat work = src;
         const int pixelNum = src.cols * src.rows;
         const int edgePixelBudget = pixelNum / 5;  // 库内部缓冲区大小

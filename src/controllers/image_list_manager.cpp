@@ -1,6 +1,5 @@
 #include "controllers/image_list_manager.h"
 #include "logger.h"
-#include "image_utils.h"
 #include "utils/path_utils.h"
 
 ImageListManager::ImageListManager(
@@ -64,14 +63,7 @@ void ImageListManager::onAddClicked()
     QString imageName = fileInfo.completeBaseName();
     QString imageId = m_roiManager.addImage(img, imageName, fileName);
 
-    if (!imageId.isEmpty()) {
-        m_roiManager.switchToImage(imageId);
-
-        const cv::Mat& currentImage = m_roiManager.getFullImage();
-        if (!currentImage.empty()) {
-            emit imageDisplayRequested(currentImage);
-        }
-    }
+    if (!imageId.isEmpty()) m_roiManager.switchToImage(imageId);
 }
 
 void ImageListManager::onRemoveClicked()
@@ -90,7 +82,6 @@ void ImageListManager::onRemoveClicked()
     if (ret == QMessageBox::Yes) {
         m_roiManager.removeImage(currentImageId);
 
-        emit imageRemoved();
     }
 }
 
@@ -140,9 +131,6 @@ void ImageListManager::onCurrentImageChanged(const QString& imageId)
             break;
         }
     }
-
-    const cv::Mat& currentImage = m_roiManager.getFullImage();
-    emit imageDisplayRequested(currentImage);
 
     spdlog::info(QString("已切换到图片: %1").arg(imageId));
 }

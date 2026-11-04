@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <opencv2/opencv.hpp>
 #include <QRectF>
@@ -131,7 +131,7 @@ signals:
     void roiConfigChanged();
     void imageAdded(const QString& imageId);
     void imageRemoved(const QString& imageId);
-    /// [NOTE] 图片即将切换（在m_currentImageId改变之前发射），用于保存旧图片的ROI配置
+    /// 图片即将切换（在m_currentImageId改变之前发射），用于保存旧图片的ROI配置
     void imageSwitching(const QString& fromImageId, const QString& toImageId);
     void currentImageChanged(const QString& imageId);
 

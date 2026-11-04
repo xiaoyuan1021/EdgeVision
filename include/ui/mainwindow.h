@@ -2,7 +2,6 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <opencv2/core/mat.hpp>
 #include "core/roi_manager.h"
 #include "config/mqtt_config.h"
 #include <optional>
@@ -56,28 +55,13 @@ public:
     explicit MainWindow(QWidget *parent = nullptr, std::optional<MqttConfig> mqttConfig = std::nullopt);
     ~MainWindow();
 
-    /// 供外部模块请求处理
-    void processAndDisplay();
-    void showImage(const cv::Mat& img);
-    /// Submit a preview through InspectionSession (scheduler coalesces requests).
-    void requestRefresh();
-
 private slots:
-    void onPipelineConfigClicked();
-    void onAddRoiClicked();
-    void onDeleteRoiClicked();
-    void onSwitchRoiClicked();
     void onTabChanged(int index);
     void onLogClicked();
     void onHomeClicked();
     void onSaveConfigClicked();
     void onImportConfigClicked();
-    void onStartAutoDetectionClicked();
     void startAutoDetection();
-    void onStopAutoDetectionClicked();
-    void onCloudPlatformClicked();
-    void onSaveToProfileClicked();
-    void onLoadFromProfileClicked();
     void onImportFolderClicked();
 
 private:
@@ -93,7 +77,7 @@ private:
     void setupConnections();
 
     /// 页面切换淡入淡出动画
-    void animatePageSwitch(int fromIndex, int toIndex);
+    void animatePageSwitch(int toIndex);
     void stopAllAsyncOperations();
 
     Ui::MainWindow *ui;

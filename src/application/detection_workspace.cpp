@@ -38,7 +38,6 @@ DetectionWorkspace::DetectionWorkspace(QTabWidget* tabs, TabManager* tabManager,
 
 void DetectionWorkspace::onTabCreated(const QString& tabName, QWidget* widget)
 {
-    // 1. ISignalConnectable 接口：建立信号连接
     auto* connectable = dynamic_cast<ISignalConnectable*>(widget);
     if (connectable) {
         connectable->connectSignals(
@@ -52,12 +51,10 @@ void DetectionWorkspace::onTabCreated(const QString& tabName, QWidget* widget)
         spdlog::warn("[DetectionWorkspace] Tab '{}' 未实现 ISignalConnectable 接口，跳过信号连接", tabName.toStdString());
     }
 
-    // 2. IConfigurableTab 接口：注册到 ConfigController
     if (auto* configurableTab = dynamic_cast<IConfigurableTab*>(widget)) {
         m_configController->registerTab(configurableTab);
     }
 
-    // 3. ITabInitializable 接口：执行初始化
     if (auto* initializableTab = dynamic_cast<ITabInitializable*>(widget)) {
         TabInitContext ctx;
         ctx.profileManager = m_profileManager;
@@ -65,7 +62,7 @@ void DetectionWorkspace::onTabCreated(const QString& tabName, QWidget* widget)
         initializableTab->initializeTab(ctx);
     }
 
-    // 4. VideoTab 特殊处理：播放状态切换时通知推理后端
+    // 视频播放时采用流式结果策略，模型执行仍由 PipelineExecutor 管理。
     if (auto* videoTab = qobject_cast<VideoTabWidget*>(widget)) {
         connect(videoTab->getVideoManager(), &VideoManager::playbackStateChanged,
                 this, [this](VideoManager::PlaybackState state) {
@@ -73,18 +70,10 @@ void DetectionWorkspace::onTabCreated(const QString& tabName, QWidget* widget)
                 });
     }
 
-    // 5. StepConfigWidget 特殊处理：tabsNeeded 信号
     if (auto* stepWidget = qobject_cast<StepConfigWidget*>(widget)) {
         connect(stepWidget, &StepConfigWidget::tabsNeeded, this, [this](const QStringList& tabNames) {
-            bool anyNew = false;
             for (const auto& name : tabNames) {
-                if (!m_tabManager->isCreated(name)) {
-                    m_tabManager->ensureTab(name);
-                    anyNew = true;
-                }
-            }
-            if (anyNew) {
-                m_detectionUiController->setTabNames(m_tabManager->createdTabNames());
+                m_tabManager->ensureTab(name);
             }
             // 按指定顺序重排 TabBar
             auto* tabBar = m_tabs->tabBar();
@@ -113,66 +102,33 @@ void DetectionWorkspace::selectDetection(const QString& roiId, const QString& de
     m_displayModeManager->onTabChanged(m_tabs->currentIndex());
 
     if (auto* roi = m_roiManager.getRoiConfig(roiId)) {
-        for (const auto& item : roi->detectionItems) {
-            if (item.itemId == detectionId) {
-                bool isVideoDetect = (item.type == DetectionType::VideoDetection);
-                m_view->setZoomEnabled(!isVideoDetect);
-                spdlog::info("画布缩放: {}", isVideoDetect ? "已禁用(视频检测模式)" : "已启用");
-                break;
-            }
+        if (const auto* item = roi->getDetectionItem(detectionId)) {
+            m_view->setZoomEnabled(item->type != DetectionType::VideoDetection);
         }
     }
 }
 
 void DetectionWorkspace::ensureTabExists(const QString& tabName)
 {
-    if (m_tabManager->isCreated(tabName)) return;
-
     m_tabManager->ensureTab(tabName);
-
-    m_detectionUiController->setTabNames(m_tabManager->createdTabNames());
-}
-
-void DetectionWorkspace::hideAllDetectionTabs()
-{
-    if (!m_tabs) return;
-
-    const QSignalBlocker blocker(m_tabs);
-    // 隐藏所有Tab（包括"图像"Tab）
-    for (int i = 0; i < m_tabs->count(); ++i) {
-        m_tabs->setTabVisible(i, false);
-    }
-
-    spdlog::info("[DetectionWorkspace] 已隐藏所有Tab");
 }
 
 void DetectionWorkspace::restoreTabVisibility()
 {
-    spdlog::info("[DetectionWorkspace] restoreTabVisibility: 开始恢复Tab可见性");
-
     const QSignalBlocker blocker(m_tabs);
-    // 1. 先清空所有Tab
-    hideAllDetectionTabs();
-
-    // 2. 优先恢复检测项Tab（如有）
-    if (m_roiUiController->autoSelectFirstDetectionItem()) {
-        spdlog::info("[DetectionWorkspace] restoreTabVisibility: 已恢复检测项Tab");
-        return;
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        m_tabs->setTabVisible(i, false);
     }
 
-    // 3. 无检测项时，恢复步骤Tab（仅当图片有ROI时才恢复，避免未配置的图片显示"步骤"Tab）
-    const auto currentRois = m_roiManager.getRoiConfigs();
-    if (!currentRois.isEmpty()) {
-        ensureTabExists("步骤");
-        if (auto* stepWidget = m_tabManager->getTabAs<StepConfigWidget>("步骤")) {
-            stepWidget->loadFromConfig(m_pipelineManager->getConfigSnapshot());
-            stepWidget->applyTabVisibility();
-            spdlog::info("[DetectionWorkspace] restoreTabVisibility: 已恢复步骤Tab");
-            return;
-        }
-    }
+    // 检测项页面优先；只有 ROI 而没有检测项时显示步骤配置。
+    if (m_roiUiController->autoSelectFirstDetectionItem()) return;
+    if (m_roiManager.getRoiConfigCount() == 0) return;
 
-    spdlog::info("[DetectionWorkspace] restoreTabVisibility: 无可恢复的Tab");
+    ensureTabExists("步骤");
+    if (auto* stepWidget = m_tabManager->getTabAs<StepConfigWidget>("步骤")) {
+        stepWidget->loadFromConfig(m_pipelineManager->getConfigSnapshot());
+        stepWidget->applyTabVisibility();
+    }
 }
 
 void DetectionWorkspace::openPipelineConfig()
@@ -198,12 +154,10 @@ void DetectionWorkspace::openPipelineConfig()
     // 跳转到「步骤」Tab（Pipeline配置页面）
     ensureTabExists("步骤");
 
-    for (int i = 0; i < m_tabs->count(); ++i) {
-        if (m_tabs->tabText(i) == "步骤") {
-            m_tabs->setTabVisible(i, true);  // 先显示Tab
-            m_tabs->setCurrentIndex(i);
-            break;
-        }
+    const int index = m_tabs->indexOf(m_tabManager->getTab("步骤"));
+    if (index >= 0) {
+        m_tabs->setTabVisible(index, true);
+        m_tabs->setCurrentIndex(index);
     }
 }
 

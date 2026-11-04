@@ -223,7 +223,7 @@ void ObjectDetectionTabWidget::connectSignals(const SignalContext& ctx,
     connect(this, &ObjectDetectionTabWidget::detectionConfigChanged,
             this, [onExecutePipeline]() { onExecutePipeline(); });
 
-    // [NOTE] 所有配置变化时同步到DetectionItem.config
+    // 所有配置变化时同步到DetectionItem.config
     auto syncToDetectionItem = [this, ctx]() {
         if (ctx.roiCtrl) {
             ctx.roiCtrl->updateObjectDetectionConfig(getDetectionConfig());

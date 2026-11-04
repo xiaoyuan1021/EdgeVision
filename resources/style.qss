@@ -44,7 +44,7 @@ QSplitter::handle {
         stop:0 rgba(79,172,254,0.05),
         stop:0.5 rgba(79,172,254,0.15),
         stop:1 rgba(79,172,254,0.05));
-    width: 2px;
+    width: 6px;
 }
 
 /* =========================
@@ -380,11 +380,11 @@ QTabWidget::pane {
 QTabBar::tab {
     background: transparent;
     color: #8A9BAE;
-    padding: 10px 20px;
+    padding: 7px 10px;
     margin-right: 2px;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
-    font-size: 14px;
+    font-size: 12px;
 }
 
 QTabBar::tab:selected {
@@ -767,4 +767,26 @@ QTextEdit {
 QWidget#tabWidget QGroupBox {
     background-color: #FAFBFC;
     border: 1px solid #EEF2F6;
+}
+
+/* Image viewport toolbar */
+QWidget#imageViewControls QToolButton {
+    background: #FFFFFF;
+    border: 1px solid #D4DFEB;
+    border-radius: 4px;
+    color: #334B63;
+    padding: 5px 7px;
+}
+QWidget#imageViewControls QToolButton:hover,
+QWidget#imageViewControls QToolButton:checked {
+    background: #E7F1FC;
+    border-color: #5B9BD5;
+}
+QWidget#imageViewControls QToolButton:disabled {
+    color: #9AA8B7;
+    border-color: #E2E8F0;
+}
+QWidget#imageViewControls QLabel {
+    color: #52657A;
+    font-size: 11px;
 }

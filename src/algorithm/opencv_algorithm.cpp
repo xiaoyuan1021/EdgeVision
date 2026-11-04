@@ -1,4 +1,4 @@
-﻿#include "opencv_algorithm.h"
+#include "opencv_algorithm.h"
 #include "image_processor.h"
 #include "logger.h"
 #include <cstring>
@@ -693,7 +693,7 @@ RegionFeature OpenCVAlgorithm::calculateRegionFeature(const cv::Mat& region, int
     return feature;
 }
 
-// =============== 新增特征计算函数 ===============
+// =============== 区域特征计算 ===============
 
 double OpenCVAlgorithm::calculateCompactness(const std::vector<cv::Point>& contour)
 {

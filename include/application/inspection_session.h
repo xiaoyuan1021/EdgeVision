@@ -19,14 +19,14 @@ public:
         RoiUiController* roiUi, TabManager* tabs, ImageView* view,
         DisplayModeManager* display, QObject* parent = nullptr);
     void loadImage(const cv::Mat& image, const QString& path);
-    void showImage(const cv::Mat& image);
-    void applyImageConfig(const QString& imageId);
     void requestRefresh();
     void shutdown();
 signals:
     void imageSessionChanged();
     void statusMessage(const QString& message, int timeout = 0);
 private:
+    void showImage(const cv::Mat& image);
+    void applyImageConfig(const QString& imageId);
     void currentImageChanged(const QString& imageId);
     PipelineManager* m_pipeline;
     RoiManager* m_rois;

@@ -22,7 +22,7 @@
 #include "config/blob_judge_config.h"
 #include "config/barcode_config.h"
 
-// ====== 枚举类型（原 pipeline_types.h，合并于此）======
+// Pipeline 步骤标识
 
 /// Pipeline步骤类型
 enum class StepType : int
@@ -63,7 +63,7 @@ inline const char* stepDisplayName(StepType type)
  * 与 detection_config_types.h 中的类型不同——后者是 DetectionItem
  * （每个检测项独立持有）的专用配置，用于支持一个ROI下挂多个检测项。
  *
- * 本文件的配置由 PipelineManager 持有，在 processAndDisplay() 时传入 Pipeline 执行。
+ * 本文件的配置由 PipelineManager 持有，提交请求时保存为快照，交给 PipelineExecutor 执行。
  *
  * 按功能分组为子结构体，降低单一"胖结构体"的维护风险。
  * 每个子结构体独立管理自己的职责领域。
@@ -114,7 +114,7 @@ struct PipelineConfig
      * @brief 重置所有配置为出厂默认值
      *
      * 切换图片、ROI 或无配置时调用，防止旧配置污染新任务。
-     * 不修改 stepOrder/stepEnabled（由 rebuildPipeline 管理）。
+     * 同时恢复默认 stepOrder，并禁用所有步骤。
      */
     void resetToDefaults();
 

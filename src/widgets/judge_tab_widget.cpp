@@ -13,7 +13,7 @@ JudgeTabWidget::JudgeTabWidget(IPipelineAccess* pipelineAccess, QWidget *parent)
     m_ui->setupUi(this);
     m_ui->lineEdit_nowRegions->setReadOnly(true);
     connect(m_ui->btn_runTest, &QPushButton::clicked, this, &JudgeTabWidget::onRunTestClicked);
-    // 【Bug1修复补充】连接min/max输入框变化信号，用于同步到DetectionItem.config
+    // 连接min/max输入框变化信号，用于同步到DetectionItem.config
     connect(m_ui->lineEdit_minRegionCount, &QLineEdit::editingFinished, this, &JudgeTabWidget::onJudgeValueChanged);
     connect(m_ui->lineEdit_maxRegionCount, &QLineEdit::editingFinished, this, &JudgeTabWidget::onJudgeValueChanged);
 }

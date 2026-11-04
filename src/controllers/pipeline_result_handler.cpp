@@ -44,7 +44,7 @@ void PipelineResultHandler::onPipelineResult(const PipelineResult& result)
 
         if (m_imageView) {
             QImage qimg = ImageUtils::matToQImage(displayImage);
-            m_imageView->setImage(qimg);
+            m_imageView->setImageKeepZoom(qimg);
         }
 
         // 显示总处理时间（Pipeline + 目标检测）

@@ -18,7 +18,6 @@ class ToastNotification;
  * 1. 保存当前检测方案
  * 2. 加载检测方案并同步ROI/条码配置
  *
- * 从 MainWindow 中提取，降低 MainWindow 的职责复杂度。
  */
 class ProfileController : public QObject
 {

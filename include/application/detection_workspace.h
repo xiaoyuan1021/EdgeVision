@@ -27,7 +27,6 @@ public:
         DisplayModeManager* display, PipelineResultHandler* results,
         QObject* parent = nullptr);
     void ensureTabExists(const QString& name);
-    void hideAllDetectionTabs();
     void restoreTabVisibility();
     void openPipelineConfig();
     void addDetection();

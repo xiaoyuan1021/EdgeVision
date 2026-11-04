@@ -5,6 +5,7 @@
 #include "image_utils.h"
 #include "widgets/batch_match_dialog.h"
 #include "core/profile_manager.h"
+#include "core/roi_manager.h"
 #include "data/inspection_profile.h"
 #include <QMessageBox>
 #include <QInputDialog>
@@ -115,7 +116,6 @@ void TemplateTabWidget::drawTemplate()
         return;
     }
     m_view->startPolygonDrawing("template");
-    //m_ui->statusbar->showMessage("请在图像上绘制模板区域（多边形）");
     spdlog::info("开始绘制模板区域");
 }
 
@@ -123,7 +123,6 @@ void TemplateTabWidget::clearTemplateDrawing()
 {
     m_view->clearPolygonDrawing();
     clearMatchResults();
-    //m_ui->statusbar->showMessage("已清除模板区域");
     spdlog::info("已清除模板区域");
 }
 
@@ -202,7 +201,6 @@ void TemplateTabWidget::findTemplate()
     int maxMatches = m_ui->spinBox_matchNumber->value();
 
     spdlog::info("========== 开始模板匹配 ==========");
-    //m_ui->statusbar->showMessage("正在搜索模板...");
 
     QVector<MatchResult> results = m_currentStrategy->findMatches(
         m_roiManager->getCurrentImage(), minScore, maxMatches, 0.7);
@@ -210,13 +208,11 @@ void TemplateTabWidget::findTemplate()
     if (results.isEmpty()) {
         spdlog::info("未找到匹配目标");
         QMessageBox::information(m_parent, "结果", "未找到匹配目标");
-        //m_ui->statusbar->showMessage("未找到匹配", 3000);
     } else {
         cv::Mat resultImage = m_currentStrategy->drawMatches(m_roiManager->getCurrentImage(), results);
         emit imageToShow(resultImage);
 
         QString msg = QString("找到 %1 个匹配目标").arg(results.size());
-        //m_ui->statusbar->showMessage(msg, 5000);
         emit matchCompleted(results.size());
 
         QString resultText = QString("找到 %1 个匹配目标\n\n").arg(results.size());
@@ -489,7 +485,6 @@ void TemplateTabWidget::updateUIState(bool hasTemplate)
 
     if (hasTemplate)
     {
-        //m_ui->statusbar->showMessage(QString("✓ 已创建模板 [%1]").arg(getCurrentStrategyName()), 2000);
     }
 }
 

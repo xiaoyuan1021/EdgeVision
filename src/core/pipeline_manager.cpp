@@ -1,4 +1,4 @@
-﻿#include "pipeline_manager.h"
+#include "pipeline_manager.h"
 #include "pipeline_executor.h"
 #include "config/constants.h"
 #include "logger.h"
@@ -137,7 +137,7 @@ void PipelineManager::resetPipeline()
     clearLastResult();
     m_config.algorithmQueue.clear();
     m_config.shapeFilter.clear();
-    // [FIX] 重置步骤配置到默认值
+    // 重置步骤配置到默认值
     m_config.stepEnabled = {false, false, false, false, false, false, false, false, false};
     m_config.stepOrder = {0, 1, 2, 3, 4, 5, 6, 7, 8};
     m_config.enableObjectDetection = false;

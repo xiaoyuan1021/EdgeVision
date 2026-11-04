@@ -1,6 +1,7 @@
 #include "extract_tab_widget.h"
 #include "ui_extract_tab.h"
 #include "algorithm/opencv_algorithm.h"
+#include "core/roi_manager.h"
 #include "logger.h"
 #include "config/config_manager.h"
 #include <QMessageBox>
@@ -234,15 +235,11 @@ void ExtractTabWidget::drawRegion()
         return;
     }
     m_view->startRectangleDrawing("region");
-
-    if (m_statusBar) {
-        m_statusBar->showMessage("请在图像上拖动鼠标绘制区域，松开左键确认");
-    }
 }
 
 void ExtractTabWidget::clearRegion()
 {
-    m_view->clearPolygonDrawing();
+    m_view->clearRectangleDrawing();
     spdlog::info("已清除绘制区域");
 }
 

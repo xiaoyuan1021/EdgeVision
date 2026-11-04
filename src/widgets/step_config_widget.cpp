@@ -113,7 +113,7 @@ void StepConfigWidget::syncSelectedLayout()
     while (m_selectedOuterLayout->count() > 0) {
         auto* lastItem = m_selectedOuterLayout->itemAt(m_selectedOuterLayout->count() - 1);
         if (lastItem && lastItem->spacerItem()) {
-            m_selectedOuterLayout->takeAt(m_selectedOuterLayout->count() - 1);
+            delete m_selectedOuterLayout->takeAt(m_selectedOuterLayout->count() - 1);
         } else {
             break;
         }
@@ -131,36 +131,17 @@ void StepConfigWidget::syncSelectedLayout()
     updateSelectedNumbers();
 }
 
-// ========== 更新可选步骤区域高度 ==========
-
-void StepConfigWidget::updateAvailableAreaHeight()
+void StepConfigWidget::syncAvailableLayout()
 {
-    if (!m_availableScroll) return;
-
-    int count = m_availableFrames.size();
-    if (count == 0) {
-        m_availableScroll->setMinimumHeight(0);
-        m_availableScroll->setMaximumHeight(0);
-        return;
-    }
-
-    // 每行2列，计算行数
-    int rows = (count + 1) / 2;
-    // 每个卡片高度40px，间距6px，加上一些padding
-    int rowHeight = 40 + 6;
-    int totalHeight = rows * rowHeight + 6;
-
-    m_availableScroll->setMinimumHeight(totalHeight);
-    m_availableScroll->setMaximumHeight(totalHeight);
-}
-
-// ========== 安全清理 layout（取出所有 widget 并销毁子 layout）==========
-
-static void clearLayout(QVBoxLayout* outerLayout)
-{
-    while (outerLayout->count() > 0) {
-        outerLayout->takeAt(0);
-    }
+    // Keep one layout for the lifetime of the page; moving cards only replaces items.
+    while (auto* item = m_availableGrid->takeAt(0)) delete item;
+    const int columns = m_availableScroll->viewport()->width() >= 406 ? 2 : 1;
+    for (int i = 0; i < m_availableFrames.size(); ++i)
+        m_availableGrid->addWidget(m_availableFrames[i], i / columns, i % columns);
+    m_availableGrid->setColumnStretch(0, 1);
+    m_availableGrid->setColumnStretch(1, columns == 2 ? 1 : 0);
+    const int rows = (m_availableFrames.size() + columns - 1) / columns;
+    m_availableScroll->setFixedHeight(std::min(rows, 4) * 46 + (rows ? 2 : 0));
 }
 
 void StepConfigWidget::moveStepToSelected(QFrame* frame)
@@ -169,17 +150,6 @@ void StepConfigWidget::moveStepToSelected(QFrame* frame)
     QString stepColor = QString::fromUtf8(kSteps[entryIdx].color);
 
     m_availableFrames.removeOne(frame);
-
-    // 安全清理并重建待选区网格
-    clearLayout(m_availableOuterLayout);
-
-    QGridLayout* newGrid = new QGridLayout();
-    newGrid->setSpacing(6);
-    newGrid->setContentsMargins(0, 0, 0, 0);
-    for (int i = 0; i < m_availableFrames.size(); ++i) {
-        newGrid->addWidget(m_availableFrames[i], i / 2, i % 2);
-    }
-    m_availableOuterLayout->addLayout(newGrid);
 
     // 确认区：显示拖拽手柄和编号
     if (auto* handle = frame->findChild<QLabel*>("dragHandle")) {
@@ -205,7 +175,7 @@ void StepConfigWidget::moveStepToSelected(QFrame* frame)
 
     // 同步 layout
     syncSelectedLayout();
-    updateAvailableAreaHeight();
+    syncAvailableLayout();
 
     updatePipelinePreview();
 }
@@ -231,24 +201,14 @@ void StepConfigWidget::moveStepToAvailable(QFrame* frame)
     // 更新卡片样式为禁用状态
     updateCardStyle(frame, false);
 
-    // 恢复可选步骤卡片的固定大小
-    frame->setFixedSize(200, 40);
-
-    // 安全清理并重建待选区网格
+    frame->setMinimumWidth(160);
+    frame->setMaximumWidth(QWIDGETSIZE_MAX);
+    frame->setFixedHeight(40);
     m_availableFrames.append(frame);
-    clearLayout(m_availableOuterLayout);
-
-    QGridLayout* newGrid = new QGridLayout();
-    newGrid->setSpacing(6);
-    newGrid->setContentsMargins(0, 0, 0, 0);
-    for (int i = 0; i < m_availableFrames.size(); ++i) {
-        newGrid->addWidget(m_availableFrames[i], i / 2, i % 2);
-    }
-    m_availableOuterLayout->addLayout(newGrid);
 
     // 同步确认区 layout
     syncSelectedLayout();
-    updateAvailableAreaHeight();
+    syncAvailableLayout();
 
     updatePipelinePreview();
 }
@@ -257,8 +217,11 @@ void StepConfigWidget::moveStepToAvailable(QFrame* frame)
 
 bool StepConfigWidget::eventFilter(QObject* obj, QEvent* event)
 {
+    if (obj == m_availableScroll->viewport() && event->type() == QEvent::Resize) {
+        syncAvailableLayout();
+    }
     // ---- 确认区步骤项拖拽发起 ----
-    if (m_selectedFrames.contains(static_cast<QFrame*>(obj))) {
+    if (m_selectedFrames.contains(qobject_cast<QFrame*>(obj))) {
         auto* frame = static_cast<QFrame*>(obj);
         switch (event->type()) {
         case QEvent::MouseButtonPress: {
@@ -502,16 +465,21 @@ void StepConfigWidget::setupUI()
     availScroll->setStyleSheet(QString(
         "QScrollArea { background: transparent; border: none; }") + scrollBarStyle);
     m_availableScroll = availScroll;
+    availScroll->setObjectName("availableStepsScroll");
+    availScroll->viewport()->installEventFilter(this);
 
     m_availableContainer = new QWidget();
+    m_availableContainer->setObjectName("availableSteps");
     m_availableContainer->setAutoFillBackground(true);
     QPalette availPal;
     availPal.setColor(QPalette::Window, Qt::transparent);
     m_availableContainer->setPalette(availPal);
 
-    m_availableOuterLayout = new QVBoxLayout(m_availableContainer);
-    m_availableOuterLayout->setSpacing(0);
-    m_availableOuterLayout->setContentsMargins(0, 0, 0, 0);
+    m_availableGrid = new QGridLayout(m_availableContainer);
+    m_availableGrid->setSizeConstraint(QLayout::SetMinimumSize);
+    m_availableGrid->setSpacing(6);
+    m_availableGrid->setContentsMargins(0, 0, 0, 0);
+    m_availableGrid->setAlignment(Qt::AlignTop);
 
     availScroll->setWidget(m_availableContainer);
     mainLayout->addWidget(availScroll);
@@ -582,10 +550,8 @@ QFrame* StepConfigWidget::createStepCard(int entryIdx, bool anyEnabled, const St
     auto* frame = new QFrame();
     frame->setObjectName("stepCard");
 
-    // 可选步骤固定大小，已选步骤后面会调整
-    if (!anyEnabled) {
-        frame->setFixedSize(200, 40);
-    }
+    frame->setMinimumWidth(160);
+    frame->setFixedHeight(40);
 
     QString stepColor = QString::fromUtf8(step.color);
     QString borderColor = anyEnabled ? stepColor : "#CBD5E1";
@@ -754,8 +720,8 @@ void StepConfigWidget::rebuildStepItems()
     m_selectedFrames.clear();
 
     // 清空待选区 layout
-    while (m_availableOuterLayout->count() > 0) {
-        auto* item = m_availableOuterLayout->takeAt(0);
+    while (m_availableGrid->count() > 0) {
+        auto* item = m_availableGrid->takeAt(0);
         delete item;
     }
     // 清空确认区 layout
@@ -833,15 +799,6 @@ void StepConfigWidget::rebuildStepItems()
         }
     }
 
-    // 构建待选区网格（2列）
-    QGridLayout* availGrid = new QGridLayout();
-    availGrid->setSpacing(6);
-    availGrid->setContentsMargins(0, 0, 0, 0);
-    for (int i = 0; i < m_availableFrames.size(); ++i) {
-        availGrid->addWidget(m_availableFrames[i], i / 2, i % 2);
-    }
-    m_availableOuterLayout->addLayout(availGrid);
-
     // 构建确认区（单列）
     m_selectedOuterLayout->addWidget(m_emptyHintLabel);
     for (auto* frame : m_selectedFrames) {
@@ -881,7 +838,7 @@ void StepConfigWidget::rebuildStepItems()
     }
 
     updateSelectedNumbers();
-    updateAvailableAreaHeight();
+    syncAvailableLayout();
     updatePipelinePreview();
 }
 
@@ -987,11 +944,10 @@ void StepConfigWidget::onApplyClicked()
     m_pipelineManager->rebuildPipeline();
     emit tabsNeeded(collectEnabledTabNames());
     applyTabVisibility();
-    // [FIX] 应用配置只保存步骤设置，不执行 pipeline
-    // if (m_onExecutePipeline) m_onExecutePipeline();
+    // 应用配置只保存步骤设置，不执行 pipeline
     updatePipelinePreview();
 
-    // [FIX] 保存配置到当前图片（per-image 隔离）
+    // 保存配置到当前图片（per-image 隔离）
     if (m_roiManager) {
         QString imageId = m_roiManager->getCurrentImageId();
         if (!imageId.isEmpty()) {

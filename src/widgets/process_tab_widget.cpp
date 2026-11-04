@@ -128,7 +128,6 @@ void ProcessTabWidget::moveAlgorithmUp()
     m_ui->algorithmListWidget->setCurrentRow(currentRow - 1);
 
     emit algorithmChanged();
-    //m_ui->statusbar->showMessage("算法步骤已上移", 1000);
 }
 
 void ProcessTabWidget::moveAlgorithmDown()
@@ -145,7 +144,6 @@ void ProcessTabWidget::moveAlgorithmDown()
     m_ui->algorithmListWidget->setCurrentRow(currentRow + 1);
 
     emit algorithmChanged();
-    //m_ui->statusbar->showMessage("算法步骤已下移", 1000);
 }
 
 void ProcessTabWidget::onAlgorithmTypeChanged(int index)

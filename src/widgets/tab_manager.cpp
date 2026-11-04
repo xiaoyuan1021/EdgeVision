@@ -35,7 +35,6 @@ void TabManager::ensureTab(const QString& tabName)
 
     m_tabWidget->addTab(widget, tabName);
     m_tabs[tabName] = widget;
-    m_tabOrder.append(tabName);
 
     emit tabCreated(tabName, widget);
 }
