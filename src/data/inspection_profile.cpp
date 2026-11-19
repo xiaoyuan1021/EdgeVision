@@ -45,9 +45,18 @@ QString profileFormatError(const QJsonObject& object)
         if (!optionalObject(roi, "pipelineConfig")) return QStringLiteral("ROI 配置格式错误");
         if (!roi.contains("detectionItems")) continue;
         if (!roi["detectionItems"].isArray()) return QStringLiteral("检测项列表格式错误");
+        QSet<QString> itemIds;
         for (const auto& detection : roi["detectionItems"].toArray()) {
             if (!detection.isObject()) return QStringLiteral("检测项必须是对象");
             const auto item = detection.toObject();
+            const auto id = item["itemId"].toString();
+            const auto type = item["type"].toString();
+            if (id.trimmed().isEmpty() || itemIds.contains(id)) return QStringLiteral("检测项 ID 缺失或重复");
+            itemIds.insert(id);
+            if (type != detectionTypeToString(stringToDetectionType(type)))
+                return QStringLiteral("不支持的检测类型：%1").arg(type);
+            if (item.contains("enabled") && !item["enabled"].isBool())
+                return QStringLiteral("检测项启用状态必须是布尔值");
             if (!optionalObject(item, "config") || !optionalObject(item, "pipelineSnapshot"))
                 return QStringLiteral("检测项配置格式错误");
         }

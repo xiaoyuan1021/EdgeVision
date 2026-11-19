@@ -102,6 +102,15 @@ private slots:
         replaceRoiField("negative-roi-height", "relativeRect",
             QJsonObject{{"x", 0.1}, {"y", 0.2}, {"width", 0.3}, {"height", -0.4}});
         replaceRoiField("wrong-detection-array-type", "detectionItems", QJsonObject{});
+        replaceRoiField("empty-detection", "detectionItems", QJsonArray{QJsonObject{}});
+        auto item = DetectionItem("line", DetectionType::Line).toJson();
+        item["type"] = "typo";
+        replaceRoiField("unknown-detection-type", "detectionItems", QJsonArray{item});
+        item = DetectionItem("line", DetectionType::Line).toJson();
+        item["enabled"] = "false";
+        replaceRoiField("non-boolean-detection-state", "detectionItems", QJsonArray{item});
+        item = DetectionItem("line", DetectionType::Line).toJson();
+        replaceRoiField("duplicate-detection-id", "detectionItems", QJsonArray{item, item});
         replaceRoiField("wrong-pipeline-type", "pipelineConfig", QJsonArray{});
         replaceField("wrong-template-array-type", "templates", QJsonObject{});
         replaceField("non-object-template", "templates", QJsonArray{42});
