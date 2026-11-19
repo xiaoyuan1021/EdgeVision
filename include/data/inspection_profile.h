@@ -15,8 +15,7 @@
  *
  * 按名称保存模板图像和参数，方便跨图片复用。
  * 存储路径结构：
- *   profiles/<profileName>/templates/<templateName>.png
- *   profiles/<profileName>/templates/<templateName>.json
+ *   profiles/<profileName>/templates/<templateName>.tpl
  */
 struct TemplateEntry
 {
@@ -69,12 +68,11 @@ struct RoiTemplate
  * 封装为一个可保存、可加载、可复用的完整检测方案。
  *
  * 存储目录结构：
- *   resources/profiles/<profileName>/
+ *   profiles/<profileName>/
  *   ├── profile.json          // 方案配置
  *   ├── thumbnail.png         // 方案缩略图（可选）
  *   └── templates/            // 模板库
- *       ├── 螺丝A.png
- *       ├── 螺丝A.json
+ *       ├── 螺丝A.tpl
  *       └── ...
  */
 struct InspectionProfile
@@ -108,6 +106,6 @@ struct InspectionProfile
 
     // 文件系统操作
     bool saveToDirectory(const QString& profilesDir);
-    bool loadFromDirectory(const QString& profileDir);
+    bool loadFromDirectory(const QString& profileDir, QString* error = nullptr);
     cv::Mat generateThumbnail(const cv::Mat& fullImage, int thumbWidth = 120) const;
 };

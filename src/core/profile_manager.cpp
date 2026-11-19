@@ -51,8 +51,11 @@ void ProfileManager::scanProfiles()
     for (const QString& subDir : subDirs) {
         QString profilePath = profilesDirectory() + "/" + subDir;
         InspectionProfile profile;
-        if (profile.loadFromDirectory(profilePath)) {
+        QString error;
+        if (profile.loadFromDirectory(profilePath, &error)) {
             m_profiles[profile.profileId] = profile;
+        } else {
+            spdlog::warn(QString("[ProfileManager] 跳过无效方案 %1: %2").arg(subDir, error));
         }
     }
 

@@ -4,7 +4,66 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QSet>
+#include <cmath>
+#include <utility>
 #include <opencv2/imgproc.hpp>
+
+namespace {
+bool isStorageName(const QString& name)
+{
+    if (name.trimmed().isEmpty() || name.endsWith('.') || name.endsWith(' ')) return false;
+    for (const auto ch : name)
+        if (ch.unicode() < 32 || QStringLiteral("<>:\"/\\|?*").contains(ch)) return false;
+    return true;
+}
+
+bool optionalObject(const QJsonObject& object, const char* key)
+{
+    return !object.contains(key) || object[key].isObject();
+}
+
+QString profileFormatError(const QJsonObject& object)
+{
+    if (object["profileId"].toString().trimmed().isEmpty()) return QStringLiteral("缺少方案 ID");
+    if (!isStorageName(object["profileName"].toString())) return QStringLiteral("方案名称无效");
+    if (!object["roiTemplates"].isArray()) return QStringLiteral("ROI 模板列表缺失或格式错误");
+    if (!optionalObject(object, "globalPipelineConfig")) return QStringLiteral("全局配置格式错误");
+    const auto rois = object["roiTemplates"].toArray();
+    if (!rois.isEmpty() && (object["refImageWidth"].toInt() <= 0 || object["refImageHeight"].toInt() <= 0))
+        return QStringLiteral("参考图像尺寸无效");
+    for (const auto& value : rois) {
+        if (!value.isObject()) return QStringLiteral("ROI 模板必须是对象");
+        const auto roi = value.toObject();
+        if (!roi["relativeRect"].isObject()) return QStringLiteral("ROI 矩形缺失或格式错误");
+        const auto rect = roi["relativeRect"].toObject();
+        for (const auto* key : {"x", "y", "width", "height"})
+            if (!rect[key].isDouble() || !std::isfinite(rect[key].toDouble()))
+                return QStringLiteral("ROI 坐标必须是有限数值");
+        if (rect["width"].toDouble() <= 0 || rect["height"].toDouble() <= 0)
+            return QStringLiteral("ROI 尺寸必须大于零");
+        if (!optionalObject(roi, "pipelineConfig")) return QStringLiteral("ROI 配置格式错误");
+        if (!roi.contains("detectionItems")) continue;
+        if (!roi["detectionItems"].isArray()) return QStringLiteral("检测项列表格式错误");
+        for (const auto& detection : roi["detectionItems"].toArray()) {
+            if (!detection.isObject()) return QStringLiteral("检测项必须是对象");
+            const auto item = detection.toObject();
+            if (!optionalObject(item, "config") || !optionalObject(item, "pipelineSnapshot"))
+                return QStringLiteral("检测项配置格式错误");
+        }
+    }
+    if (object.contains("templates") && !object["templates"].isArray())
+        return QStringLiteral("模板库列表格式错误");
+    QSet<QString> names;
+    for (const auto& value : object["templates"].toArray()) {
+        const auto name = value.toObject()["templateName"].toString();
+        if (!isStorageName(name)) return QStringLiteral("模板名称无效");
+        if (names.contains(name.toCaseFolded())) return QStringLiteral("模板名称重复");
+        names.insert(name.toCaseFolded());
+    }
+    return {};
+}
+}
 
 // ==================== TemplateEntry 实现 ====================
 
@@ -305,21 +364,34 @@ bool InspectionProfile::saveToDirectory(const QString& profilesDir) {
     return true;
 }
 
-bool InspectionProfile::loadFromDirectory(const QString& profileDir) {
-    QFile file(profileDir + "/profile.json");
-    if (!file.open(QIODevice::ReadOnly)) {
+bool InspectionProfile::loadFromDirectory(const QString& profileDir, QString* error) {
+    if (error) error->clear();
+    const auto fail = [error](const QString& message) {
+        if (error) *error = message;
         return false;
-    }
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
+    };
+    QFile file(profileDir + "/profile.json");
+    if (!file.open(QIODevice::ReadOnly)) return fail(file.errorString());
+    const auto bytes = file.readAll();
+    if (file.error() != QFileDevice::NoError) return fail(file.errorString());
+    QJsonParseError parseError;
+    const auto doc = QJsonDocument::fromJson(bytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError) return fail(parseError.errorString());
+    if (!doc.isObject()) return fail(QStringLiteral("方案文件根节点必须是对象"));
+    const auto formatError = profileFormatError(doc.object());
+    if (!formatError.isEmpty()) return fail(formatError);
 
-    fromJson(doc.object());
+    InspectionProfile candidate;
+    candidate.fromJson(doc.object());
+    const auto directoryName = QDir(profileDir).dirName();
+    if (candidate.profileName.compare(directoryName, Qt::CaseInsensitive) != 0)
+        return fail(QStringLiteral("方案名称与所在目录不一致"));
+    candidate.profileName = directoryName;
+    for (auto& tpl : candidate.templates)
+        if (!tpl.load(profileDir)) return fail(QStringLiteral("模板文件缺失或损坏：%1").arg(tpl.templateName));
 
-    // 加载模板图像
-    for (auto& tpl : templates) {
-        tpl.load(profileDir);
-    }
-
+    // 整个方案及其模板均有效后才替换内存状态。
+    *this = std::move(candidate);
     return true;
 }
 
