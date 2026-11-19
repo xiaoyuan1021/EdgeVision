@@ -1,5 +1,8 @@
 """Public HTTP API and event stream. Dependencies belong to the app factory."""
+import csv
+import io
 import json
+from contextlib import closing
 import logging
 import os
 import queue
@@ -108,20 +111,50 @@ def create_api(runtime):
         return jsonify(runtime.database.db_load_by_hour())
 
 
-    @api.route("/api/results/history")
-    def api_results_history():
-        device_id = request.args.get("device")
-        roi_name = request.args.get("roi")
+    def history_filters():
         passed_str = request.args.get("passed")
-        days = query_integer("days", None, 0)
-        page = query_integer("page", 1, 1)
-        page_size = min(query_integer("page_size", 50, 1), 200)
         passed = None
         if passed_str is not None:
             if passed_str.lower() not in ("1", "true", "pass", "0", "false", "fail"):
                 raise BadRequest("passed must be true or false")
             passed = passed_str.lower() in ("1", "true", "pass")
-        return jsonify(runtime.database.db_query_history(device_id, roi_name, passed, days, page, page_size))
+        return (request.args.get("device"), request.args.get("roi"), passed,
+                query_integer("days", None, 0))
+
+    @api.route("/api/results/history")
+    def api_results_history():
+        filters = history_filters()
+        page = query_integer("page", 1, 1)
+        page_size = min(query_integer("page_size", 50, 1), 200)
+        return jsonify(runtime.database.db_query_history(*filters, page, page_size))
+
+    @api.get("/api/results/history/export")
+    def api_export_history():
+        filters = history_filters()
+
+        def generate():
+            buffer = io.StringIO(newline="")
+            writer = csv.writer(buffer)
+
+            def csv_row(values):
+                buffer.seek(0)
+                buffer.truncate(0)
+                writer.writerow(values)
+                return buffer.getvalue()
+
+            yield "\ufeff" + csv_row(["时间", "设备", "图片", "ROI", "结果", "检测项通过",
+                                      "检测项失败", "失败项", "失败原因", "报告ID", "时间戳(ms)"])
+            with closing(runtime.database.db_iter_history(*filters)) as records:
+                for item in records:
+                    yield csv_row([item["dateTime"], item["deviceId"], item["imageName"], item["roiName"],
+                                   "合格" if item["passed"] else "不合格", item["passedItems"],
+                                   item["failedItems"], item["failedItemNames"], item["failReason"],
+                                   item["reportId"], item["timestamp"]])
+
+        filename = "inspection_history_" + datetime.now().strftime("%Y-%m-%d") + ".csv"
+        return Response(stream_with_context(generate()), content_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                                 "Cache-Control": "no-store"})
 
 
     @api.route("/api/results/summary")

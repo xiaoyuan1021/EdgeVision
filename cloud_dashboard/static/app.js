@@ -487,18 +487,22 @@
         let historyPageSize = 20;
         let historyTotalPages = 1;
 
+        function historyFilterParams() {
+            const params = new URLSearchParams();
+            for (const [key, id] of [['device', 'historyDevice'], ['roi', 'historyRoi'],
+                                     ['passed', 'historyStatus'], ['days', 'historyDays']]) {
+                const value = document.getElementById(id).value;
+                if (value) params.set(key, value);
+            }
+            return params;
+        }
+
         function queryHistory(page = 1) {
             historyPage = page;
-            const device = document.getElementById('historyDevice').value;
-            const roi = document.getElementById('historyRoi').value;
-            const passed = document.getElementById('historyStatus').value;
-            const days = document.getElementById('historyDays').value;
-
-            let url = `/api/results/history?page=${page}&page_size=${historyPageSize}`;
-            if (device) url += `&device=${encodeURIComponent(device)}`;
-            if (roi) url += `&roi=${encodeURIComponent(roi)}`;
-            if (passed) url += `&passed=${passed}`;
-            if (days) url += `&days=${days}`;
+            const params = historyFilterParams();
+            params.set('page', page);
+            params.set('page_size', historyPageSize);
+            const url = `/api/results/history?${params}`;
 
             fetch(url)
                 .then(r => r.json())
@@ -581,49 +585,13 @@
         }
 
         function exportHistory() {
-            const device = document.getElementById('historyDevice').value;
-            const roi = document.getElementById('historyRoi').value;
-            const passed = document.getElementById('historyStatus').value;
-            const days = document.getElementById('historyDays').value;
-
-            let url = `/api/results/history?page=1&page_size=10000`;
-            if (device) url += `&device=${encodeURIComponent(device)}`;
-            if (roi) url += `&roi=${encodeURIComponent(roi)}`;
-            if (passed) url += `&passed=${passed}`;
-            if (days) url += `&days=${days}`;
-
-            fetch(url)
-                .then(r => r.json())
-                .then(data => {
-                    if (!data.items || data.items.length === 0) {
-                        alert('没有可导出的数据');
-                        return;
-                    }
-
-                    // Build CSV
-                    const headers = ['时间', '设备', '图片', 'ROI', '结果', '检测项通过', '检测项失败', '失败项'];
-                    const rows = data.items.map(item => [
-                        item.dateTime || '',
-                        item.deviceId || '',
-                        item.imageName || '',
-                        item.roiName || '',
-                        item.passed ? '合格' : '不合格',
-                        item.passedItems ?? 0,
-                        item.failedItems ?? 0,
-                        item.failedItemNames || ''
-                    ]);
-
-                    let csv = '\uFEFF'; // BOM for Chinese
-                    csv += headers.join(',') + '\n';
-                    csv += rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
-
-                    // Download
-                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.download = `检测历史_${new Date().toISOString().slice(0,10)}.csv`;
-                    link.click();
-                });
+            // The browser streams the download; pagination limits apply only to the table.
+            const link = document.createElement('a');
+            link.href = `/api/results/history/export?${historyFilterParams()}`;
+            link.download = `检测历史_${new Date().toISOString().slice(0, 10)}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
         }
 
         function loadHistoryFilters() {

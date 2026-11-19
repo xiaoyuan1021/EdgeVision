@@ -273,54 +273,63 @@ class Database:
             conn.close()
 
 
+    @staticmethod
+    def _history_conditions(device_id, roi_name, passed, days):
+        conditions, params = [], []
+        if device_id:
+            conditions.append("device_id=?")
+            params.append(device_id)
+        if roi_name:
+            conditions.append("roi_name=?")
+            params.append(roi_name)
+        if passed is not None:
+            conditions.append("passed=?")
+            params.append(1 if passed else 0)
+        if days:
+            cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+            # Stored dates use both ISO 'T' and the legacy space separator.
+            conditions.append("replace(date_time, 'T', ' ')>=?")
+            params.append(cutoff)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        return where, params
+
+    @staticmethod
+    def _history_record(row):
+        return {
+            "reportId": row["report_id"],
+            "deviceId": row["device_id"],
+            "imageName": row["image_name"] or "",
+            "roiName": row["roi_name"] or "",
+            "passed": bool(row["passed"]),
+            "failReason": row["fail_reason"] or "",
+            "totalItems": row["total_items"] or 0,
+            "passedItems": row["passed_items"] or 0,
+            "failedItems": row["failed_items"] or 0,
+            "failedItemNames": row["failed_item_names"] or "",
+            "timestamp": row["timestamp"],
+            "dateTime": row["date_time"] or "",
+        }
+
     def db_query_history(self, device_id=None, roi_name=None, passed=None, days=None, page=1, page_size=50):
-        conn = self.get_db()
-        try:
-            conditions, params = [], []
-            if device_id:
-                conditions.append("device_id=?")
-                params.append(device_id)
-            if roi_name:
-                conditions.append("roi_name=?")
-                params.append(roi_name)
-            if passed is not None:
-                conditions.append("passed=?")
-                params.append(1 if passed else 0)
-            if days:
-                cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-                conditions.append("date_time>=?")
-                params.append(cutoff)
-            where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        with closing(self.get_db()) as conn:
+            where, params = self._history_conditions(device_id, roi_name, passed, days)
             count_row = conn.execute(f"SELECT COUNT(*) AS cnt FROM results {where}", params).fetchone()
             total = count_row["cnt"] if count_row else 0
             offset = (page - 1) * page_size
             rows = conn.execute(
                 f"SELECT * FROM results {where} ORDER BY id DESC LIMIT ? OFFSET ?",
                 params + [page_size, offset],
-            ).fetchall()
-            items = []
-            for r in rows:
-                try:
-                    item = {
-                        "reportId": r["report_id"],
-                        "deviceId": r["device_id"],
-                        "imageName": r["image_name"] or "",
-                        "roiName": r["roi_name"] or "",
-                        "passed": bool(r["passed"]),
-                        "failReason": r["fail_reason"] or "",
-                        "totalItems": r["total_items"] or 0,
-                        "passedItems": r["passed_items"] or 0,
-                        "failedItems": r["failed_items"] or 0,
-                        "failedItemNames": r["failed_item_names"] or "",
-                        "timestamp": r["timestamp"],
-                        "dateTime": r["date_time"] or "",
-                    }
-                    items.append(item)
-                except (TypeError, KeyError):
-                    pass
-            return {"total": total, "page": page, "page_size": page_size, "items": items}
-        finally:
-            conn.close()
+            )
+            return {"total": total, "page": page, "page_size": page_size,
+                    "items": [self._history_record(row) for row in rows]}
+
+    def db_iter_history(self, device_id=None, roi_name=None, passed=None, days=None):
+        """Read one consistent query without loading an entire history into memory."""
+        with closing(self.get_db()) as conn:
+            where, params = self._history_conditions(device_id, roi_name, passed, days)
+            with closing(conn.execute(f"SELECT * FROM results {where} ORDER BY id DESC", params)) as rows:
+                for row in rows:
+                    yield self._history_record(row)
 
     @staticmethod
     def _insert_debug_results(conn, name, total, passed):
