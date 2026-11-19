@@ -239,6 +239,75 @@ private slots:
         QCOMPARE(f.pipeline.scheduler()->pendingCount(), 0);
     }
 
+    void savingExistingProfilePreservesItsTemplateLibrary_data() {
+        QTest::addColumn<bool>("differentActiveProfile");
+        QTest::newRow("active-profile") << false;
+        QTest::newRow("another-profile-active") << true;
+    }
+
+    void savingExistingProfilePreservesItsTemplateLibrary() {
+        QFETCH(bool, differentActiveProfile);
+        RoiManager rois;
+        PipelineManager pipeline;
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        ProfileManager profiles(&rois, &pipeline, nullptr, directory.path());
+        rois.setFullImage(cv::Mat(20, 20, CV_8UC3, cv::Scalar(42)));
+        RoiConfig roi("part", QRectF(0, 0, 20, 20));
+        rois.addRoiConfig(roi);
+        QVERIFY(profiles.saveCurrentAsProfile("inspection", "original"));
+        const auto profileId = profiles.activeProfileId();
+        const auto createdAt = profiles.getProfile(profileId).createdAt;
+        cv::Mat templateImage(3, 4, CV_8UC1, cv::Scalar(95));
+        templateImage.at<uchar>(1, 2) = 255;
+        const QVector<QPointF> polygon{{0, 0}, {3, 0}, {3, 2}};
+        QVERIFY(profiles.saveTemplateToProfile(profileId, "label", templateImage, polygon, 0));
+
+        if (differentActiveProfile) {
+            QVERIFY(profiles.saveCurrentAsProfile("other"));
+            QVERIFY(profiles.activeProfileId() != profileId);
+            QVERIFY(profiles.getTemplateNames(profiles.activeProfileId()).isEmpty());
+        }
+        auto* changedRoi = rois.getRoiConfig(roi.roiId);
+        QVERIFY(changedRoi);
+        changedRoi->roiRect = QRectF(2, 3, 8, 9);
+        DetectionItem line("edge", DetectionType::Line);
+        PipelineConfig snapshot;
+        snapshot.lineDetect.angleThreshold = 27;
+        snapshot.enhance.brightness = 13;
+        line.savePipeline(snapshot);
+        changedRoi->detectionItems.append(line);
+
+        QVERIFY(profiles.saveCurrentAsProfile("inspection", "updated"));
+        QCOMPARE(profiles.activeProfileId(), profileId);
+        QCOMPARE(profiles.getProfileList().size(), differentActiveProfile ? 2 : 1);
+        QCOMPARE(profiles.getProfile(profileId).createdAt, createdAt);
+        QCOMPARE(profiles.getTemplateNames(profileId), QStringList{"label"});
+
+        ProfileManager reloaded(&rois, &pipeline, nullptr, directory.path());
+        QCOMPARE(reloaded.getProfileList().size(), profiles.getProfileList().size());
+        const auto saved = reloaded.getProfile(profileId);
+        QCOMPARE(saved.description, QString("updated"));
+        QCOMPARE(saved.createdAt.toString(Qt::ISODate), createdAt.toString(Qt::ISODate));
+        QCOMPARE(saved.roiTemplates.size(), 1);
+        QCOMPARE(saved.roiTemplates.first().toRoiConfig(QSize(20, 20)).roiRect,
+            changedRoi->roiRect);
+        QCOMPARE(saved.roiTemplates.first().detectionItems.size(), 1);
+        const auto savedPipeline = saved.roiTemplates.first().detectionItems.first().resolvedPipeline({});
+        QCOMPARE(savedPipeline.lineDetect.angleThreshold, 27.0);
+        QCOMPARE(savedPipeline.enhance.brightness, 13);
+        cv::Mat restoredImage;
+        QVector<QPointF> restoredPolygon;
+        int restoredMethod = -1;
+        QVERIFY(reloaded.loadTemplateFromProfile(profileId, "label", restoredImage,
+            restoredPolygon, restoredMethod));
+        QCOMPARE(restoredImage.size(), templateImage.size());
+        QCOMPARE(restoredImage.type(), templateImage.type());
+        QCOMPARE(cv::norm(restoredImage, templateImage, cv::NORM_INF), 0.0);
+        QCOMPARE(restoredPolygon, polygon);
+        QCOMPARE(restoredMethod, 0);
+    }
+
     void roiRunnerExecutesSeparateSnapshotsAndAttributesFailures() {
         RoiConfig roi("part", QRectF(0, 0, 20, 20));
         for (int expected : {2, 5}) {

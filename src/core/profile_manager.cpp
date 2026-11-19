@@ -75,16 +75,18 @@ bool ProfileManager::saveCurrentAsProfile(const QString& profileName,
 
     emit snapshotRequested();
 
-    // 从 RoiManager 导出方案
-    InspectionProfile profile = m_roiManager->exportAsProfile(profileName, imageSize);
-    profile.description = description;
-
-    // 如果有活跃方案ID，保留ID
-    if (!m_activeProfileId.isEmpty() && m_profiles.contains(m_activeProfileId)) {
-        if (m_profiles[m_activeProfileId].profileName == profileName) {
-            profile.profileId = m_activeProfileId;
-        }
+    const InspectionProfile snapshot = m_roiManager->exportAsProfile(profileName, imageSize);
+    InspectionProfile profile = snapshot;
+    // 同名方案共用保存目录，只更新当前图片快照，保留模板库和方案身份。
+    for (auto it = m_profiles.cbegin(); it != m_profiles.cend(); ++it) {
+        if (it->profileName != profileName) continue;
+        profile = it.value();
+        profile.referenceImageSize = snapshot.referenceImageSize;
+        profile.roiTemplates = snapshot.roiTemplates;
+        profile.updatedAt = snapshot.updatedAt;
+        break;
     }
+    profile.description = description;
 
     // 保存到目录
     ensureProfilesDir();
