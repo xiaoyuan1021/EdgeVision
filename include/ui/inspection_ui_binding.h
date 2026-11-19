@@ -21,6 +21,7 @@ public:
 private:
     void showResults();
     void refreshResults();
+    void refreshRetryAvailability();
     void activateImage(const QString& imageId);
 
     QPointer<AutoDetectionController> m_detection;

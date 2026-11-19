@@ -1,6 +1,12 @@
 #include <QtTest>
 #include <QSignalSpy>
+#include <QLabel>
+#include <QPushButton>
+#include <QStatusBar>
+#include <QWidget>
 #include "controllers/auto_detection_controller.h"
+#include "ui/inspection_results_dialog.h"
+#include "ui/inspection_ui_binding.h"
 
 namespace {
 struct Sample {
@@ -36,6 +42,62 @@ class InspectionRetryTest : public QObject
 {
     Q_OBJECT
 private slots:
+    void retryButtonFollowsLiveStateAndPreservesPreviousReports() {
+        RoiManager rois;
+        const auto sample = addSample(rois, "sample", true);
+        AutoDetectionController detection(&rois);
+        QWidget window;
+        QPushButton start(&window), stop(&window), results(&window);
+        QStatusBar status(&window);
+        QLabel label(&window);
+        InspectionUiBinding binding(&detection, &rois, &start, &stop, &results, &status, &label, &window);
+        connect(&start, &QPushButton::clicked, &detection, &AutoDetectionController::startDetection);
+        connect(&stop, &QPushButton::clicked, &detection, &AutoDetectionController::stopDetection);
+        results.click();
+        auto* dialog = window.findChild<InspectionResultsDialog*>();
+        QVERIFY(dialog && dialog->isVisible());
+        auto* retry = dialog->findChild<QPushButton*>("retryFailedButton");
+        QVERIFY(retry);
+        QVERIFY(!retry->isEnabled());
+        QSignalSpy requested(dialog, &InspectionResultsDialog::retryFailedRequested);
+
+        start.click();
+        QTRY_VERIFY_WITH_TIMEOUT(!detection.isRunning(), 10000);
+        QCOMPARE(detection.records().size(), 1);
+        QCOMPARE(detection.records().first().status, InspectionStatus::Failed);
+        const auto originalDetails = detection.records().first().result.toJson();
+        QVERIFY(retry->isEnabled());
+
+        retry->click();
+        QCOMPARE(requested.size(), 1);
+        QVERIFY(detection.isRunning());
+        QVERIFY(!retry->isEnabled());
+        QTRY_VERIFY_WITH_TIMEOUT(!detection.isRunning(), 10000);
+        QCOMPARE(detection.records().size(), 2);
+        QCOMPARE(detection.records().last().round, 2);
+        QCOMPARE(detection.records().last().status, InspectionStatus::Failed);
+        QVERIFY(retry->isEnabled());
+
+        QVERIFY(rois.switchToImage(sample.imageId));
+        auto* roi = rois.getRoiConfig(sample.roiId);
+        QVERIFY(roi);
+        roi->roiRect = QRectF(0, 0, 20, 20);
+        retry->click();
+        QCOMPARE(requested.size(), 2);
+        QVERIFY(detection.isRunning());
+        QVERIFY(!retry->isEnabled());
+        QTRY_VERIFY_WITH_TIMEOUT(!detection.isRunning(), 10000);
+        QCOMPARE(detection.records().size(), 3);
+        QCOMPARE(detection.records().last().round, 3);
+        QCOMPARE(detection.records().last().status, InspectionStatus::Passed);
+        QCOMPARE(detection.records().first().result.toJson(), originalDetails);
+        QCOMPARE(detection.records().at(1).status, InspectionStatus::Failed);
+        QVERIFY(!retry->isEnabled());
+        retry->click();
+        QCOMPARE(requested.size(), 2);
+        QCOMPARE(detection.records().size(), 3);
+    }
+
     void retryUsesIdentityAndCurrentEditsWhilePreservingHistory() {
         RoiManager rois;
         const auto failing = addSample(rois, "same-name", true);

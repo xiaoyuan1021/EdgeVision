@@ -111,9 +111,15 @@ InspectionResultsDialog::InspectionResultsDialog(QWidget* parent) : QDialog(pare
     layout->addWidget(m_empty);
 
     auto* footer = new QHBoxLayout;
-    auto* hint = new QLabel(QStringLiteral("导出包含整个批次，不受搜索和筛选影响。\n双击结果可定位对应图片。"), this);
+    auto* hint = new QLabel(QStringLiteral("复检使用当前配置，保留原记录。\n导出包含全部轮次，不受搜索和筛选影响。\n双击结果可定位对应图片。"), this);
     hint->setWordWrap(true);
     footer->addWidget(hint, 1);
+    m_retry = new QPushButton(QStringLiteral("复检失败图片"), this);
+    m_retry->setObjectName("retryFailedButton");
+    m_retry->setAutoDefault(false);
+    m_retry->setEnabled(false);
+    m_retry->setToolTip(QStringLiteral("复检最后一次已完成结果仍为失败的图片，不受搜索和筛选影响。"));
+    footer->addWidget(m_retry);
     m_exportCsv = new QPushButton(QStringLiteral("导出 CSV…"), this);
     m_exportCsv->setObjectName("exportCsvButton");
     m_exportCsv->setAutoDefault(false);
@@ -129,6 +135,7 @@ InspectionResultsDialog::InspectionResultsDialog(QWidget* parent) : QDialog(pare
 
     connect(m_search, &QLineEdit::textChanged, this, &InspectionResultsDialog::applyFilters);
     connect(m_filter, &QComboBox::currentIndexChanged, this, &InspectionResultsDialog::applyFilters);
+    connect(m_retry, &QPushButton::clicked, this, &InspectionResultsDialog::retryFailedRequested);
     connect(m_exportCsv, &QPushButton::clicked, this,
         [this] { chooseExportPath(InspectionReportExporter::Format::Csv); });
     connect(m_exportJson, &QPushButton::clicked, this,
@@ -147,6 +154,11 @@ void InspectionResultsDialog::setRecords(QList<InspectionRecord> records)
     rebuildTree();
 }
 
+void InspectionResultsDialog::setRetryEnabled(bool enabled)
+{
+    m_retry->setEnabled(enabled);
+}
+
 void InspectionResultsDialog::rebuildTree()
 {
     const auto selected = m_tree->currentItem()
@@ -157,17 +169,23 @@ void InspectionResultsDialog::rebuildTree()
     const int scroll = m_tree->verticalScrollBar()->value();
     m_tree->clear();
     int passed = 0, failed = 0, pending = 0, skipped = 0;
+    QSet<QString> imageIds;
+    QSet<int> rounds;
     for (qsizetype index = 0; index < m_records.size(); ++index) {
         const auto& record = m_records[index];
         const auto& result = record.result;
+        imageIds.insert(result.imageId);
+        rounds.insert(record.round);
         switch (record.status) {
         case InspectionStatus::Passed: ++passed; break;
         case InspectionStatus::Failed: ++failed; break;
         case InspectionStatus::Pending: ++pending; break;
         case InspectionStatus::Skipped: ++skipped; break;
         }
-        const QString key = result.imageId.isEmpty() ? QString::number(index) : result.imageId;
-        auto* image = new QTreeWidgetItem(m_tree, {result.imageName.isEmpty() ? key : result.imageName});
+        const QString id = result.imageId.isEmpty() ? QString::number(index) : result.imageId;
+        const QString key = QString::number(record.round) + "/" + id;
+        const QString name = result.imageName.isEmpty() ? id : result.imageName;
+        auto* image = new QTreeWidgetItem(m_tree, {QStringLiteral("%1（第 %2 轮）").arg(name).arg(record.round)});
         image->setText(2, result.failReason.isEmpty() ? result.imagePath : result.failReason);
         if (record.status == InspectionStatus::Passed || record.status == InspectionStatus::Failed)
             image->setText(3, QString::number(record.elapsedMs));
@@ -203,8 +221,9 @@ void InspectionResultsDialog::rebuildTree()
         (*it)->setExpanded(!collapsed.contains(key));
         if (key == selected) m_tree->setCurrentItem(*it);
     }
-    m_summary->setText(QStringLiteral("共 %1 张图片  ·  通过 %2  ·  失败 %3  ·  未执行 %4  ·  已跳过 %5")
-        .arg(m_records.size()).arg(passed).arg(failed).arg(pending).arg(skipped));
+    m_summary->setText(QStringLiteral("%1 条记录（%2 张图片，%3 轮）  ·  通过 %4  ·  失败 %5  ·  未执行 %6  ·  已跳过 %7")
+        .arg(m_records.size()).arg(imageIds.size()).arg(rounds.size())
+        .arg(passed).arg(failed).arg(pending).arg(skipped));
     m_exportCsv->setEnabled(!m_records.isEmpty());
     m_exportJson->setEnabled(!m_records.isEmpty());
     applyFilters();
@@ -228,7 +247,7 @@ void InspectionResultsDialog::applyFilters()
         if (!item->isHidden()) ++visible;
     }
     m_empty->setText(m_records.isEmpty() ? QStringLiteral("暂无检测结果。运行批量检测后可在这里查看和导出。")
-        : QStringLiteral("没有符合当前搜索或筛选条件的图片。"));
+        : QStringLiteral("没有符合当前搜索或筛选条件的记录。"));
     m_empty->setVisible(visible == 0);
 }
 
@@ -250,5 +269,5 @@ void InspectionResultsDialog::chooseExportPath(InspectionReportExporter::Format 
         QMessageBox::warning(this, QStringLiteral("导出失败"), error);
     else
         QMessageBox::information(this, QStringLiteral("导出完成"),
-            QStringLiteral("已导出全部 %1 张图片的检测记录。\n%2").arg(m_records.size()).arg(path));
+            QStringLiteral("已导出全部 %1 条检测记录。\n%2").arg(m_records.size()).arg(path));
 }

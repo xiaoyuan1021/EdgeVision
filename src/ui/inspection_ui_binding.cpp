@@ -4,6 +4,7 @@
 #include "core/roi_manager.h"
 #include "core/logger.h"
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QStatusBar>
 #include <QWidget>
@@ -17,12 +18,14 @@ InspectionUiBinding::InspectionUiBinding(AutoDetectionController* detection, Roi
     connect(detection, &AutoDetectionController::logMessage, this,
         [](const QString& message) { spdlog::info(message); });
     connect(detection, &AutoDetectionController::detectionStarted, this, [this](int count) {
+        refreshRetryAvailability();
         if (m_start) m_start->setEnabled(false);
         if (m_stop) m_stop->setEnabled(true);
         if (m_label) m_label->clear();
         if (m_status) m_status->showMessage(QStringLiteral("批量检测中... 0/%1").arg(count));
     });
     connect(detection, &AutoDetectionController::detectionFinished, this, [this](const DetectionStats& stats) {
+        refreshRetryAvailability();
         if (m_start) m_start->setEnabled(true);
         if (m_stop) m_stop->setEnabled(false);
         if (!m_status) return;
@@ -60,6 +63,11 @@ void InspectionUiBinding::showResults()
     if (!m_dialog) {
         m_dialog = new InspectionResultsDialog(m_window);
         connect(m_dialog, &InspectionResultsDialog::imageActivated, this, &InspectionUiBinding::activateImage);
+        connect(m_dialog, &InspectionResultsDialog::retryFailedRequested, this, [this] {
+            if (m_detection && !m_detection->retryFailed())
+                QMessageBox::information(m_dialog, QStringLiteral("没有可复检的图片"),
+                    QStringLiteral("请确认失败图片仍在工作区，且有启用的 ROI 和检测项。原检测记录已保留。"));
+        });
     }
     refreshResults();
     m_dialog->show();
@@ -70,6 +78,14 @@ void InspectionUiBinding::showResults()
 void InspectionUiBinding::refreshResults()
 {
     if (m_dialog && m_detection) m_dialog->setRecords(m_detection->records());
+    refreshRetryAvailability();
+}
+
+void InspectionUiBinding::refreshRetryAvailability()
+{
+    if (m_dialog)
+        m_dialog->setRetryEnabled(m_detection && !m_detection->isRunning()
+            && !m_detection->failedImageIds().isEmpty());
 }
 
 void InspectionUiBinding::activateImage(const QString& imageId)

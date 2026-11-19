@@ -16,11 +16,13 @@ class InspectionResultsDialog : public QDialog
 public:
     explicit InspectionResultsDialog(QWidget* parent = nullptr);
     void setRecords(QList<InspectionRecord> records);
+    void setRetryEnabled(bool enabled);
     bool exportReport(const QString& path, InspectionReportExporter::Format format,
                       QString* error = nullptr) const;
 
 signals:
     void imageActivated(const QString& imageId);
+    void retryFailedRequested();
 
 private:
     void rebuildTree();
@@ -33,6 +35,7 @@ private:
     QTreeWidget* m_tree;
     QLabel* m_summary;
     QLabel* m_empty;
+    QPushButton* m_retry;
     QPushButton* m_exportCsv;
     QPushButton* m_exportJson;
 };

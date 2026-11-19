@@ -68,6 +68,7 @@ private slots:
 
     void emptyStateDisablesExport() {
         InspectionResultsDialog dialog;
+        QVERIFY(!dialog.findChild<QPushButton*>("retryFailedButton")->isEnabled());
         QVERIFY(!dialog.findChild<QPushButton*>("exportCsvButton")->isEnabled());
         QVERIFY(!dialog.findChild<QPushButton*>("exportJsonButton")->isEnabled());
         QVERIFY(!dialog.findChild<QLabel*>("resultsEmptyLabel")->isHidden());
@@ -130,6 +131,46 @@ private slots:
         QCOMPARE(activated.first().first().toString(), QString("failed-image"));
     }
 
+    void roundsKeepIndependentSelectionAndExpansion() {
+        InspectionResultsDialog dialog;
+        auto first = records()[1];
+        auto second = first;
+        second.round = 2;
+        const QList<InspectionRecord> history{first, second};
+        dialog.setRecords(history);
+        auto* tree = dialog.findChild<QTreeWidget*>("resultsTree");
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0)->child(0));
+        tree->topLevelItem(0)->setExpanded(false);
+        tree->topLevelItem(1)->setExpanded(true);
+        dialog.setRecords(history);
+        QCOMPARE(tree->currentItem(), tree->topLevelItem(0)->child(0)->child(0));
+        QVERIFY(!tree->topLevelItem(0)->isExpanded());
+        QVERIFY(tree->topLevelItem(1)->isExpanded());
+        QVERIFY(tree->topLevelItem(0)->text(0).contains(QStringLiteral("第 1 轮")));
+        QVERIFY(tree->topLevelItem(1)->text(0).contains(QStringLiteral("第 2 轮")));
+        const auto summary = dialog.findChild<QLabel*>("resultsSummaryLabel")->text();
+        QVERIFY(summary.contains(QStringLiteral("2 条记录")));
+        QVERIFY(summary.contains(QStringLiteral("1 张图片")));
+        QVERIFY(summary.contains(QStringLiteral("2 轮")));
+        QSignalSpy activated(&dialog, &InspectionResultsDialog::imageActivated);
+        tree->itemDoubleClicked(tree->topLevelItem(1)->child(0), 0);
+        QCOMPARE(activated.first().first().toString(), first.result.imageId);
+    }
+
+    void retryIsAnExplicitRequestIndependentOfVisibleFilters() {
+        InspectionResultsDialog dialog;
+        dialog.setRecords(records());
+        dialog.findChild<QLineEdit*>("resultsSearchEdit")->setText("no-match");
+        dialog.setRetryEnabled(true);
+        QSignalSpy requested(&dialog, &InspectionResultsDialog::retryFailedRequested);
+        auto* retry = dialog.findChild<QPushButton*>("retryFailedButton");
+        retry->click();
+        QCOMPARE(requested.size(), 1);
+        dialog.setRetryEnabled(false);
+        retry->click();
+        QCOMPARE(requested.size(), 1);
+    }
+
     void exportIncludesHiddenAndUnexecutedImages() {
         InspectionResultsDialog dialog;
         dialog.setRecords(records());
@@ -154,12 +195,13 @@ private slots:
     void dialogRemainsUsableAtLaptopSize() {
         InspectionResultsDialog dialog;
         dialog.setRecords(records());
+        dialog.setRetryEnabled(true);
         dialog.resize(860, 520);
         dialog.show();
         QCoreApplication::processEvents();
         auto* tree = dialog.findChild<QTreeWidget*>("resultsTree");
         QVERIFY(tree->height() > 200);
-        for (const auto* name : {"exportCsvButton", "exportJsonButton"}) {
+        for (const auto* name : {"retryFailedButton", "exportCsvButton", "exportJsonButton"}) {
             auto* button = dialog.findChild<QPushButton*>(name);
             QVERIFY(button->isVisible());
             QVERIFY(dialog.rect().contains(QRect(button->mapTo(&dialog, QPoint{}), button->size())));
