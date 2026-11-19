@@ -11,4 +11,5 @@ struct InspectionRecord
     InspectionStatus status = InspectionStatus::Pending;
     qint64 completedAtMs = 0;
     qint64 elapsedMs = 0;
+    int round = 1;
 };

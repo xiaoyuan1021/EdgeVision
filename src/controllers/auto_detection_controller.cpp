@@ -2,12 +2,14 @@
 #include "algorithm/object_detection_service.h"
 #include "controllers/auto_detection_controller.h"
 #include "logger.h"
-#include "config/detection_config_types.h"
 #include "algorithm/image_utils.h"
 #include "core/roi_inspection_runner.h"
 #include "data/roi_detection_result.h"
 #include <QtConcurrent/QtConcurrent>
 #include <QFutureWatcher>
+#include <QDateTime>
+#include <QSet>
+#include <algorithm>
 
 AutoDetectionController::AutoDetectionController(
     RoiManager* roiManager,
@@ -36,21 +38,47 @@ void AutoDetectionController::shutdown()
 
 void AutoDetectionController::startDetection()
 {
-    if (m_shutdown) return;
+    beginDetection(m_roiManager->getImageIds(), false);
+}
+
+bool AutoDetectionController::retryFailed()
+{
+    return beginDetection(failedImageIds(), true);
+}
+
+QStringList AutoDetectionController::failedImageIds() const
+{
+    QStringList failed;
+    QSet<QString> seen;
+    for (auto it = m_records.crbegin(); it != m_records.crend(); ++it) {
+        // 停止后留下的未执行记录不覆盖上一次实际检测结果。
+        if (it->status != InspectionStatus::Passed && it->status != InspectionStatus::Failed) continue;
+        const auto& id = it->result.imageId;
+        if (id.isEmpty() || seen.contains(id)) continue;
+        seen.insert(id);
+        if (it->status == InspectionStatus::Failed) failed.prepend(id);
+    }
+    return failed;
+}
+
+bool AutoDetectionController::beginDetection(const QStringList& imageIds, bool retainHistory)
+{
+    if (m_shutdown) return false;
     if (m_running) {
         emit logMessage("检测已在运行中，请先停止当前检测");
-        return;
+        return false;
     }
 
-    // 从 RoiManager 构建任务列表
-    m_tasks = buildTaskList();
+    emit snapshotRequested();
+    auto tasks = buildTaskList(imageIds);
 
-    if (m_tasks.isEmpty()) {
-        emit logMessage("没有要检测的图片，请先添加图片并配置ROI和检测项");
-        return;
+    if (tasks.isEmpty()) {
+        emit logMessage(retainHistory ? QStringLiteral("没有可复检的失败图片，请检查图片和ROI配置")
+            : QStringLiteral("没有要检测的图片，请先添加图片并配置ROI和检测项"));
+        return false;
     }
 
-    // 重置状态
+    m_tasks = std::move(tasks);
     m_currentIndex = 0;
     m_stopRequested = false;
     m_paused = false;
@@ -59,9 +87,12 @@ void AutoDetectionController::startDetection()
     m_stats.reset();
     m_stats.totalCount = m_tasks.size();
     m_reports.clear();
-    m_records.clear();
+    if (!retainHistory) m_records.clear();
+    m_recordOffset = m_records.size();
+    const int round = m_records.isEmpty() ? 1 : m_records.last().round + 1;
     for (const auto& task : m_tasks) {
         InspectionRecord record;
+        record.round = round;
         record.result.imageId = task.imageId;
         record.result.imageName = task.imageName;
         record.result.imagePath = task.imagePath;
@@ -73,10 +104,10 @@ void AutoDetectionController::startDetection()
 
     emit detectionStarted(m_stats.totalCount);
     emit recordsChanged();
-    emit logMessage(QString("开始批量检测: 共 %1 张图片").arg(m_stats.totalCount));
+    emit logMessage(QStringLiteral("开始第 %1 轮检测: 共 %2 张图片").arg(round).arg(m_stats.totalCount));
 
-    // 开始处理第一个任务
     processNextTask();
+    return true;
 }
 
 void AutoDetectionController::stopDetection()
@@ -130,11 +161,9 @@ QString AutoDetectionController::summaryString() const
 
 // ==================== 内部实现 ====================
 
-QList<ImageDetectionTask> AutoDetectionController::buildTaskList()
+QList<ImageDetectionTask> AutoDetectionController::buildTaskList(const QStringList& imageIds)
 {
     QList<ImageDetectionTask> tasks;
-
-    QStringList imageIds = m_roiManager->getImageIds();
 
     for (const QString& imageId : imageIds) {
         ImageDetectionTask task;
@@ -143,9 +172,14 @@ QList<ImageDetectionTask> AutoDetectionController::buildTaskList()
         task.imageName = m_roiManager->getImageName(imageId);
         task.roiConfigs = m_roiManager->getRoiConfigsForImage(imageId);
 
-        // 无 ROI 的图片不参与批量检测，也不分配快照。
+        // 无可执行检测的图片不分配快照，也不能产生默认的合格结果。
+        task.roiConfigs.removeIf([](const RoiConfig& roi) {
+            return !roi.isActive || (!roi.detectionItems.isEmpty()
+                && std::none_of(roi.detectionItems.cbegin(), roi.detectionItems.cend(),
+                                [](const DetectionItem& item) { return item.enabled; }));
+        });
         if (task.roiConfigs.isEmpty()) {
-            spdlog::debug(QString("[buildTaskList] 跳过图片 %1: 没有ROI配置").arg(imageId));
+            spdlog::debug(QString("[buildTaskList] 跳过图片 %1: 没有启用的ROI或检测项").arg(imageId));
             continue;
         }
 
@@ -201,7 +235,6 @@ ImageDetectionResult AutoDetectionController::executeTask(const ImageDetectionTa
 
     try {
         for (const RoiConfig& roi : task.roiConfigs) {
-            if (!roi.isActive) continue;
             const cv::Rect rect = ImageUtils::mapRoiToCvRect(roi.roiRect, image.cols, image.rows);
             if (rect.empty()) {
                 RoiDetectionResult invalid(roi.roiId, roi.roiName, task.imageId);
@@ -242,7 +275,7 @@ void AutoDetectionController::onTaskFinished()
     const auto& task = m_tasks[m_currentIndex];
     const int currentIndex = m_currentIndex;
     const int totalCount = m_stats.totalCount;
-    auto& record = m_records[currentIndex];
+    auto& record = m_records[m_recordOffset + currentIndex];
     record.result = imageResult;
     record.status = imageResult.passed ? InspectionStatus::Passed : InspectionStatus::Failed;
     record.completedAtMs = QDateTime::currentMSecsSinceEpoch();

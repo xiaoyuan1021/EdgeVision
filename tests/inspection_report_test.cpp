@@ -76,7 +76,7 @@ private slots:
         QVERIFY(data.startsWith(QByteArray::fromHex("efbbbf")));
         const auto rows = parseCsv(data);
         QCOMPARE(rows.size(), 2);
-        QCOMPARE(rows[0].size(), 18);
+        QCOMPARE(rows[0].size(), 19);
         QCOMPARE(rows[1].size(), rows[0].size());
         const auto& row = rows[1];
         QCOMPARE(row[0], record.result.imageId);
@@ -97,6 +97,7 @@ private slots:
         QCOMPARE(row[15], QString("2023-11-14T22:13:20.123Z"));
         QCOMPARE(row[16], QString::number(record.completedAtMs));
         QCOMPARE(row[17], QString("37"));
+        QCOMPARE(row[18], QString("1"));
         QCOMPARE(InspectionReportExporter::csv({record}), data);
     }
 
@@ -110,6 +111,7 @@ private slots:
         QCOMPARE(exported["completedAtMs"].toInteger(), record.completedAtMs);
         QCOMPARE(exported["elapsedMs"].toInteger(), record.elapsedMs);
         QCOMPARE(exported["status"].toString(), QString("FAIL"));
+        QCOMPARE(exported["round"].toInt(), 1);
         const auto result = exported["result"].toObject();
         QCOMPARE(result["imageId"].toString(), record.result.imageId);
         QCOMPARE(result["imagePath"].toString(), record.result.imagePath);
@@ -160,6 +162,27 @@ private slots:
         QVERIFY(exported[0].toObject()["result"].toObject()["passed"].isNull());
         QVERIFY(exported[1].toObject()["result"].toObject()["passed"].isNull());
         QVERIFY(exported[2].toObject()["result"].toObject()["passed"].toBool());
+    }
+
+    void exportsKeepOriginalAndRetriedRounds() {
+        const auto first = failedRecord();
+        auto retry = first;
+        retry.round = 2;
+        retry.status = InspectionStatus::Passed;
+        retry.result.passed = true;
+        const QList<InspectionRecord> records{first, retry};
+        const auto rows = parseCsv(InspectionReportExporter::csv(records));
+        QCOMPARE(rows.size(), 3);
+        QCOMPARE(rows[1][0], rows[2][0]);
+        QCOMPARE(rows[1][3], QString("FAIL"));
+        QCOMPARE(rows[2][3], QString("PASS"));
+        QCOMPARE(rows[1][18], QString("1"));
+        QCOMPARE(rows[2][18], QString("2"));
+        const auto json = QJsonDocument::fromJson(InspectionReportExporter::json(records)).object();
+        const auto exported = json["records"].toArray();
+        QCOMPARE(exported.size(), 2);
+        QCOMPARE(exported[0].toObject()["round"].toInt(), 1);
+        QCOMPARE(exported[1].toObject()["round"].toInt(), 2);
     }
 
     void saveWritesExactBytesAndReportsFailure() {

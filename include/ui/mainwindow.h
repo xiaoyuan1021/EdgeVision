@@ -61,7 +61,6 @@ private slots:
     void onHomeClicked();
     void onSaveConfigClicked();
     void onImportConfigClicked();
-    void startAutoDetection();
     void onImportFolderClicked();
 
 private:

@@ -92,6 +92,10 @@ public:
     /// 开始批量检测（从RoiManager自动获取图片和ROI配置）
     void startDetection();
 
+    /// 使用当前配置复检最后一次已完成结果仍为失败的图片，保留历史记录。
+    bool retryFailed();
+    QStringList failedImageIds() const;
+
     /// 停止检测
     void stopDetection();
 
@@ -119,6 +123,7 @@ public:
     QString summaryString() const;
 
 signals:
+    void snapshotRequested();
     void recordsChanged();
     /// 检测开始
     void detectionStarted(int totalCount);
@@ -143,7 +148,8 @@ signals:
 
 private:
     /// 构建检测任务列表（从RoiManager获取）
-    QList<ImageDetectionTask> buildTaskList();
+    QList<ImageDetectionTask> buildTaskList(const QStringList& imageIds);
+    bool beginDetection(const QStringList& imageIds, bool retainHistory);
 
     /// 处理下一个任务
     void processNextTask();
@@ -170,6 +176,7 @@ private:
     DetectionStats m_stats;
     QList<DetectionResultReport> m_reports;
     QList<InspectionRecord> m_records;
+    qsizetype m_recordOffset = 0;
     QStringList m_failedImages;
 
     QElapsedTimer m_elapsedTimer;       ///< 计时器

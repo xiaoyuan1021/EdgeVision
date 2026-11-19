@@ -101,7 +101,7 @@ QByteArray InspectionReportExporter::csv(const QList<InspectionRecord>& records)
         QStringLiteral("ROI ID"), QStringLiteral("ROI名称"), QStringLiteral("ROI结果"), QStringLiteral("ROI失败原因"),
         QStringLiteral("检测项ID"), QStringLiteral("检测项名称"), QStringLiteral("检测类型"),
         QStringLiteral("检测项结果"), QStringLiteral("检测项失败原因"), QStringLiteral("完成时间(UTC)"),
-        QStringLiteral("完成时间戳(ms)"), QStringLiteral("耗时(ms)")});
+        QStringLiteral("完成时间戳(ms)"), QStringLiteral("耗时(ms)"), QStringLiteral("检测轮次")});
 
     for (const auto& record : records) {
         const auto append = [&](const RoiDetectionResult* roi, const DetectionItemResult* item) {
@@ -114,7 +114,7 @@ QByteArray InspectionReportExporter::csv(const QList<InspectionRecord>& records)
                 item ? item->detectionType : QString{}, judged && item ? outcome(item->passed) : QString{},
                 item ? item->failReason : QString{}, completionTime(record),
                 record.completedAtMs > 0 ? QString::number(record.completedAtMs) : QString{},
-                judged ? QString::number(record.elapsedMs) : QString{}});
+                judged ? QString::number(record.elapsedMs) : QString{}, QString::number(record.round)});
         };
         if (record.result.roiResults.isEmpty()) append(nullptr, nullptr);
         for (const auto& roi : record.result.roiResults) {
@@ -135,7 +135,8 @@ QByteArray InspectionReportExporter::json(const QList<InspectionRecord>& records
         for (const auto& roi : record.result.roiResults) rois.append(serializeRoi(roi));
         result["roiResults"] = rois;
         rows.append(QJsonObject{{"status", statusName(record.status)}, {"completedAtMs", record.completedAtMs},
-            {"completedAt", completionTime(record)}, {"elapsedMs", record.elapsedMs}, {"result", result}});
+            {"completedAt", completionTime(record)}, {"elapsedMs", record.elapsedMs},
+            {"round", record.round}, {"result", result}});
     }
     return QJsonDocument(QJsonObject{{"schemaVersion", 1}, {"records", rows}}).toJson(QJsonDocument::Indented);
 }

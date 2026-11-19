@@ -60,7 +60,8 @@ MainWindow::MainWindow(QWidget *parent, std::optional<MqttConfig> mqttConfig)
     m_remoteController = new RemoteInspectionController(m_mqttManager, m_autoDetectionController,
         &m_roiManager, m_pipelineManager, m_tabManager, this);
     connect(m_remoteController, &RemoteInspectionController::refreshRequested, m_session, &InspectionSession::requestRefresh);
-    connect(m_remoteController, &RemoteInspectionController::startDetectionRequested, this, &MainWindow::startAutoDetection);
+    connect(m_remoteController, &RemoteInspectionController::startDetectionRequested,
+            m_autoDetectionController, &AutoDetectionController::startDetection);
     connect(m_remoteController, &RemoteInspectionController::statusMessage, this,
         [this](const QString& text) { m_toast->showMessage(text); });
     m_mqttManager->setupLogging();
@@ -142,7 +143,8 @@ void MainWindow::setupConnections()
     connect(ui->btn_Home, &QPushButton::clicked, this, &MainWindow::onHomeClicked);
     connect(ui->btn_saveConfig, &QPushButton::clicked, this, &MainWindow::onSaveConfigClicked);
     connect(ui->btn_importConfig, &QPushButton::clicked, this, &MainWindow::onImportConfigClicked);
-    connect(ui->btn_startAutoDetection, &QPushButton::clicked, this, &MainWindow::startAutoDetection);
+    connect(ui->btn_startAutoDetection, &QPushButton::clicked,
+            m_autoDetectionController, &AutoDetectionController::startDetection);
     connect(ui->btn_stopAutoDetection, &QPushButton::clicked, m_autoDetectionController, &AutoDetectionController::stopDetection);
     connect(ui->btn_cloudPlatform, &QPushButton::clicked, m_cloudDashboardManager, &CloudDashboardManager::launch);
     connect(ui->btn_saveToProfile, &QPushButton::clicked, m_profileController, &ProfileController::saveToProfile);
@@ -213,6 +215,8 @@ void MainWindow::setupControllers()
     m_detectionUiController = new DetectionUiController(m_roiManager, ui->tabWidget, this);
     m_configController = new ConfigController(m_pipelineManager, m_roiManager, this);
     m_autoDetectionController = new AutoDetectionController(&m_roiManager, this);
+    connect(m_autoDetectionController, &AutoDetectionController::snapshotRequested,
+            m_roiUiController, &RoiUiController::saveCurrentRoiPipelineConfig);
     m_profileController = new ProfileController(m_profileManager, &m_roiManager,
                                                 m_pipelineManager, m_tabManager,
                                                 m_roiUiController, m_toast, this, this);
@@ -290,12 +294,6 @@ void MainWindow::onHomeClicked()
 
 void MainWindow::onSaveConfigClicked()  { m_configController->saveConfig(this); }
 void MainWindow::onImportConfigClicked() { m_configController->loadConfig(this); }
-
-void MainWindow::startAutoDetection()
-{
-    m_roiUiController->saveCurrentRoiPipelineConfig();
-    m_autoDetectionController->startDetection();
-}
 
 void MainWindow::onImportFolderClicked()
 {
