@@ -140,7 +140,6 @@ set(HEADERS
     include/ui/toast_notification.h
     # widgets
     include/widgets/barcode_tab_widget.h
-    include/widgets/batch_detection_widget.h
     include/widgets/batch_match_dialog.h
     include/widgets/enhance_tab_widget.h
     include/widgets/extract_tab_widget.h
@@ -234,7 +233,6 @@ set(SOURCES
     src/ui/toast_notification.cpp
     # widgets
     src/widgets/barcode_tab_widget.cpp
-    src/widgets/batch_detection_widget.cpp
     src/widgets/batch_match_dialog.cpp
     src/widgets/enhance_tab_widget.cpp
     src/widgets/extract_tab_widget.cpp

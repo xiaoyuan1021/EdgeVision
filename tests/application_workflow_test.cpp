@@ -32,7 +32,6 @@
 #include "widgets/ocr_tab_widget.h"
 #include "widgets/object_detection_tab_widget.h"
 #include "widgets/step_config_widget.h"
-#include "widgets/batch_detection_widget.h"
 #include "controllers/image_list_manager.h"
 #include "ui/image_view.h"
 #include "ui/image_view_controls.h"
@@ -147,34 +146,6 @@ private slots:
         QCOMPARE(records[1].completedAtMs, 0);
         rois.clear();
         QCOMPARE(controller.records()[0].result.roiResults.first().roiName, QString("part"));
-    }
-
-    void batchPanelReportsOutOfBoundsRoiAsFailure() {
-        QTemporaryDir files;
-        QVERIFY(files.isValid());
-        const auto path = files.filePath("part.png");
-        QImage image(20, 20, QImage::Format_RGB32);
-        image.fill(Qt::black);
-        QVERIFY(image.save(path));
-        RoiManager rois;
-        PipelineManager pipeline;
-        const auto imageId = rois.addImage(cv::Mat(20, 20, CV_8UC3, cv::Scalar(0)), "part", path);
-        QVERIFY(rois.switchToImage(imageId));
-        const RoiConfig outside("outside", QRectF(30, 30, 5, 5));
-        rois.addRoiConfig(outside);
-        QCOMPARE(rois.getRoiConfigs().size(), 1);
-        BatchDetectionWidget panel(&rois, &pipeline, nullptr);
-        QSignalSpy finished(&panel, &BatchDetectionWidget::detectionFinished);
-        panel.startDetection();
-        QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 10000);
-        QCOMPARE(panel.results().size(), 1);
-        const auto& result = panel.results().first();
-        QVERIFY(result.processed);
-        QVERIFY(!result.passed);
-        QCOMPARE(result.roiReports.size(), 1);
-        QCOMPARE(result.roiReports.first().roiId, outside.roiId);
-        QVERIFY(!result.roiReports.first().passed);
-        QVERIFY(!result.roiReports.first().failReason.isEmpty());
     }
 
     void importingConfigsDoesNotSaveOutgoingEditsOverRestoredImages() {
@@ -634,6 +605,14 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!detection.isRunning(), 10000);
         QCOMPARE(detection.stats().failCount, 1);
         QVERIFY(detection.results().first().failReason.contains("ROI"));
+        QCOMPARE(detection.records().size(), 1);
+        const auto& record = detection.records().first();
+        QCOMPARE(record.status, InspectionStatus::Failed);
+        QCOMPARE(record.result.roiResults.size(), 1);
+        const auto& failedRoi = record.result.roiResults.first();
+        QCOMPARE(failedRoi.roiId, outside.roiId);
+        QVERIFY(!failedRoi.passed);
+        QVERIFY(!failedRoi.failReason.isEmpty());
     }
     void removingCurrentImageRestoresRemainingDetectionTabsOnce() {
         WorkspaceFixture f;

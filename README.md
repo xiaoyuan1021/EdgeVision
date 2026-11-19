@@ -91,13 +91,14 @@ EdgeVision 旨在打造一个**低成本、易配置、可扩展**的智能视�
 │                       UI 层                               │
 │   MainWindow · ImageView · Toast · SystemMonitor         │
 │   DisplayModeManager · CloudDashboardManager              │
+│   InspectionResultsDialog · InspectionUiBinding          │
 ├──────────────────────────────────────────────────────────┤
 │                    Widgets 层                              │
 │   StepConfigWidget (拖拽排序) · ImageFilterTab            │
 │   ImageTab · VideoTab · EnhanceTab · FilterTab           │
 │   ProcessTab · ExtractTab · JudgeTab · LineTab            │
 │   TemplateTab · BarcodeTab · ObjectDetectionTab          │
-│   ProfileTab · BatchDetectionWidget · OcrTab             │
+│   ProfileTab · OcrTab                                     │
 ├──────────────────────────────────────────────────────────┤
 │                  Controllers 层                            │
 │   AutoDetectionController · DetectionUiController        │
@@ -118,6 +119,7 @@ EdgeVision 旨在打造一个**低成本、易配置、可扩展**的智能视�
 │   PipelineConfig · DetectionItem · RoiConfig              │
 │   InspectionProfile · DetectionResultReport              │
 │   RoiDetectionResult · ImageDetectionResult              │
+│   InspectionRecord · InspectionReportExporter            │
 │   ShapeFilterConfig · RegionFeature · BarcodeResult      │
 │   OcrConfig · OcrRegion · DisplayConfig                  │
 └──────────────────────────────────────────────────────────┘
