@@ -2,13 +2,7 @@
 
 #include <QObject>
 #include <QStringList>
-#include <QTimer>
 #include <QElapsedTimer>
-#include <QPointer>
-#include <QPushButton>
-#include <QStatusBar>
-#include <QLabel>
-#include "core/pipeline.h"
 #include "roi_manager.h"
 #include "data/detection_result_report.h"
 #include "data/inspection_record.h"
@@ -123,12 +117,6 @@ public:
 
     /// 获取检测结果摘要
     QString summaryString() const;
-
-    // ==================== UI连接 ====================
-
-    /// 将UI信号连接到Controller
-    void setupUiConnections(QPushButton* startBtn, QPushButton* stopBtn,
-                            QStatusBar* statusBar, QLabel* statusLabel);
 
 signals:
     void recordsChanged();

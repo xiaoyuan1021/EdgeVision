@@ -131,6 +131,8 @@ set(HEADERS
     include/ui/file_manager.h
     include/ui/image_view.h
     include/ui/image_view_controls.h
+    include/ui/inspection_results_dialog.h
+    include/ui/inspection_ui_binding.h
     include/ui/log_page.h
     include/ui/mainwindow.h
     include/ui/slider_spinbox_binder.h
@@ -224,6 +226,8 @@ set(SOURCES
     src/ui/image_view_drawing.cpp
     src/ui/image_view_viewport.cpp
     src/ui/image_view_controls.cpp
+    src/ui/inspection_results_dialog.cpp
+    src/ui/inspection_ui_binding.cpp
     src/ui/log_page.cpp
     src/ui/mainwindow.cpp
     src/ui/system_monitor.cpp

@@ -39,6 +39,7 @@
 #include "ui/display_mode_manager.h"
 #include "ui/file_manager.h"
 #include "ui/mainwindow.h"
+#include "ui/inspection_results_dialog.h"
 #include "algorithm/image_utils.h"
 
 // Uses the production composition without opening a broker, camera or window.
@@ -84,6 +85,35 @@ struct WorkspaceFixture {
 class ApplicationWorkflowTest : public QObject {
     Q_OBJECT
 private slots:
+    void mainWindowResultsEntryShowsLiveBatchAndKeepsRemovedImageReport() {
+        MainWindow window(nullptr, MqttConfig{});
+        auto* session = window.findChild<InspectionSession*>();
+        auto* workspace = window.findChild<DetectionWorkspace*>();
+        auto* detection = window.findChild<AutoDetectionController*>();
+        auto* open = window.findChild<QPushButton*>("btn_inspectionResults");
+        QVERIFY(session && workspace && detection && open);
+        open->click();
+        auto* dialog = window.findChild<InspectionResultsDialog*>();
+        QVERIFY(dialog && dialog->isVisible());
+        session->loadImage(cv::Mat(20, 20, CV_8UC3, cv::Scalar(0)), {});
+        workspace->openPipelineConfig();
+        window.findChild<QPushButton*>("btn_startAutoDetection")->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!detection->isRunning(), 10000);
+        QCOMPARE(detection->records().size(), 1);
+        auto* tree = dialog->findChild<QTreeWidget*>("resultsTree");
+        QCOMPARE(tree->topLevelItemCount(), 1);
+        QVERIFY(tree->topLevelItem(0)->text(1) != QStringLiteral("未执行"));
+        open->click();
+        QCOMPARE(window.findChildren<InspectionResultsDialog*>().size(), 1);
+        dialog->imageActivated(detection->records()[0].result.imageId);
+        QVERIFY(!dialog->isVisible());
+        open->click();
+        dialog->imageActivated("removed-image-id");
+        QVERIFY(dialog->isVisible());
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("移除")));
+        QCOMPARE(tree->topLevelItemCount(), 1);
+    }
+
     void batchRecordsKeepRoiDetailsAndStoppedTasksRemainPending() {
         RoiManager rois;
         for (int i = 0; i < 2; ++i) {

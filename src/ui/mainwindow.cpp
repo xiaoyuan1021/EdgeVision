@@ -10,6 +10,7 @@
 #include "config/constants.h"
 #include "ui/image_view.h"
 #include "ui/image_view_controls.h"
+#include "ui/inspection_ui_binding.h"
 #include <QTabBar>
 #include "ui/system_monitor.h"
 #include "ui/file_manager.h"
@@ -222,9 +223,9 @@ void MainWindow::setupControllers()
     detectionStatusLabel->setStyleSheet(
         "font-size: 11px; color: #6B7280; padding: 2px 4px;");
     ui->statusbar->insertPermanentWidget(1, detectionStatusLabel);
-    m_autoDetectionController->setupUiConnections(
-        ui->btn_startAutoDetection, ui->btn_stopAutoDetection,
-        ui->statusbar, detectionStatusLabel);
+    new InspectionUiBinding(m_autoDetectionController, &m_roiManager,
+        ui->btn_startAutoDetection, ui->btn_stopAutoDetection, ui->btn_inspectionResults,
+        ui->statusbar, detectionStatusLabel, this);
     m_roiUiController->setupTreeView(ui->treeView);
     m_roiUiController->setupDisplayConnections(m_tabManager);
 

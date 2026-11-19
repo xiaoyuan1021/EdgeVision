@@ -26,6 +26,12 @@ MainWindow 不再持有无实际作用的 Config/Execute 状态和“设置后�
 
 `RoiInspectionRunner` 遍历启用的检测项，每项单独运行预处理并调用 DetectionEvaluator 判定，失败归属到具体项。没有检测项的旧 ROI 仍执行它自己的 Pipeline。全量图片配置额外保存每张图片的 Pipeline；方案模板继续按归一化矩形适配分辨率。
 
+## 检测结果与报告
+
+`InspectionRecord` 保留自动检测的图片级结果及执行状态、完成时间、耗时；每项结果仍携带 ROI 和检测项身份。MQTT 上报保持既有接口，本地记录另外保存完整层级。
+
+`InspectionReportExporter` 只处理数据与文件，不依赖控件或控制器；CSV 展开检测项，JSON 保存完整结构。`InspectionResultsDialog` 接收记录快照，负责搜索、筛选和导出交互。`InspectionUiBinding` 负责将实际检测入口的信号连接到按钮、状态栏和结果窗口，图片定位仍由 RoiManager 完成。
+
 ## 画布展示
 
 `ImageView` 的图像、缩放、适配与空态实现在 `image_view_viewport.cpp`；绘制状态/几何在 `image_view_drawing.cpp`，鼠标与键盘分派在 `image_view.cpp`。缩放以 QGraphicsView 的变换为准，绘制用互斥 `DrawingMode` 和各工具必要的阶段数据，不使用可同时为真的多个工具开关。`ImageViewControls` 是独立展示组件，直接连接视图的操作和状态信号，MainWindow 只装配一次。
@@ -52,4 +58,4 @@ ROI 裁剪先求左右/上下边界与图像的交集，再做整数转换；无
 
 ## 验证
 
-运行 `test-msvc.cmd` 验证核心目标，运行 `test-ui-msvc.cmd` 验证 `ui_interaction`、`application_workflow` 和 `image_view`。应用流程覆盖真实 MainWindow 正常析构、图片会话、配置保留、页面恢复、批量快照、ROI 边界、异步采集与调度器关闭；画布套件直接操作生产视图的鼠标、键盘及工具条。相机采集使用注入函数，不连接真实 Broker 或摄像头。
+运行 `test-msvc.cmd` 验证核心目标，运行 `test-ui-msvc.cmd` 验证 `ui_interaction`、`application_workflow`、`image_view` 和 `inspection_results`。应用流程覆盖真实 MainWindow 正常析构、图片会话、配置保留、页面恢复、批量快照、ROI 边界、异步采集与调度器关闭；画布套件直接操作生产视图的鼠标、键盘及工具条。相机采集使用注入函数，不连接真实 Broker 或摄像头。
