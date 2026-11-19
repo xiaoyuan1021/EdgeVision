@@ -77,9 +77,9 @@ bool ProfileManager::saveCurrentAsProfile(const QString& profileName,
 
     const InspectionProfile snapshot = m_roiManager->exportAsProfile(profileName, imageSize);
     InspectionProfile profile = snapshot;
-    // 同名方案共用保存目录，只更新当前图片快照，保留模板库和方案身份。
+    // Windows 目录不区分大小写，沿用已有名称、模板库和方案身份。
     for (auto it = m_profiles.cbegin(); it != m_profiles.cend(); ++it) {
-        if (it->profileName != profileName) continue;
+        if (it->profileName.compare(profileName, Qt::CaseInsensitive) != 0) continue;
         profile = it.value();
         profile.referenceImageSize = snapshot.referenceImageSize;
         profile.roiTemplates = snapshot.roiTemplates;
@@ -92,7 +92,7 @@ bool ProfileManager::saveCurrentAsProfile(const QString& profileName,
     ensureProfilesDir();
     if (!profile.saveToDirectory(profilesDirectory())) {
         spdlog::error(
-            QString("[ProfileManager] 保存方案失败: %1").arg(profileName));
+            QString("[ProfileManager] 保存方案失败: %1").arg(profile.profileName));
         return false;
     }
 
@@ -102,11 +102,11 @@ bool ProfileManager::saveCurrentAsProfile(const QString& profileName,
 
     spdlog::info(
         QString("[ProfileManager] 方案已保存: %1 (ROI数: %2, 模板数: %3)")
-            .arg(profileName)
+            .arg(profile.profileName)
             .arg(profile.roiTemplates.size())
             .arg(profile.templates.size()));
 
-    emit profileSaved(profile.profileId, profileName);
+    emit profileSaved(profile.profileId, profile.profileName);
     emit profileListChanged();
     return true;
 }

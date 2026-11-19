@@ -241,12 +241,16 @@ private slots:
 
     void savingExistingProfilePreservesItsTemplateLibrary_data() {
         QTest::addColumn<bool>("differentActiveProfile");
-        QTest::newRow("active-profile") << false;
-        QTest::newRow("another-profile-active") << true;
+        QTest::addColumn<QString>("saveName");
+        QTest::newRow("active-profile") << false << QString("inspection");
+        QTest::newRow("another-profile-active") << true << QString("inspection");
+        QTest::newRow("active-profile-case-change") << false << QString("InSpEcTiOn");
+        QTest::newRow("another-profile-active-case-change") << true << QString("InSpEcTiOn");
     }
 
     void savingExistingProfilePreservesItsTemplateLibrary() {
         QFETCH(bool, differentActiveProfile);
+        QFETCH(QString, saveName);
         RoiManager rois;
         PipelineManager pipeline;
         QTemporaryDir directory;
@@ -278,15 +282,22 @@ private slots:
         line.savePipeline(snapshot);
         changedRoi->detectionItems.append(line);
 
-        QVERIFY(profiles.saveCurrentAsProfile("inspection", "updated"));
+        QSignalSpy savedSignal(&profiles, &ProfileManager::profileSaved);
+        QVERIFY(profiles.saveCurrentAsProfile(saveName, "updated"));
+        QCOMPARE(savedSignal.size(), 1);
+        QCOMPARE(savedSignal.first().at(0).toString(), profileId);
+        QCOMPARE(savedSignal.first().at(1).toString(), QString("inspection"));
         QCOMPARE(profiles.activeProfileId(), profileId);
         QCOMPARE(profiles.getProfileList().size(), differentActiveProfile ? 2 : 1);
+        QCOMPARE(profiles.getProfile(profileId).profileName, QString("inspection"));
         QCOMPARE(profiles.getProfile(profileId).createdAt, createdAt);
         QCOMPARE(profiles.getTemplateNames(profileId), QStringList{"label"});
 
         ProfileManager reloaded(&rois, &pipeline, nullptr, directory.path());
         QCOMPARE(reloaded.getProfileList().size(), profiles.getProfileList().size());
         const auto saved = reloaded.getProfile(profileId);
+        QCOMPARE(saved.profileId, profileId);
+        QCOMPARE(saved.profileName, QString("inspection"));
         QCOMPARE(saved.description, QString("updated"));
         QCOMPARE(saved.createdAt.toString(Qt::ISODate), createdAt.toString(Qt::ISODate));
         QCOMPARE(saved.roiTemplates.size(), 1);
