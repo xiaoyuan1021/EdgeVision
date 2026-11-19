@@ -122,6 +122,8 @@ set(HEADERS
     include/data/barcode_result.h
     include/data/detection_result_report.h
     include/data/inspection_profile.h
+    include/data/inspection_record.h
+    include/data/inspection_report_exporter.h
     include/data/region_feature.h
     # ui
     include/ui/cloud_dashboard_manager.h
@@ -207,6 +209,7 @@ set(SOURCES
     src/algorithm/display_renderer.cpp
     # data
     src/data/inspection_profile.cpp
+    src/data/inspection_report_exporter.cpp
     # config
     src/config/config_manager.cpp
     src/config/pipeline_config.cpp

@@ -59,11 +59,20 @@ void AutoDetectionController::startDetection()
     m_stats.reset();
     m_stats.totalCount = m_tasks.size();
     m_reports.clear();
+    m_records.clear();
+    for (const auto& task : m_tasks) {
+        InspectionRecord record;
+        record.result.imageId = task.imageId;
+        record.result.imageName = task.imageName;
+        record.result.imagePath = task.imagePath;
+        m_records.append(std::move(record));
+    }
     m_failedImages.clear();
 
     m_elapsedTimer.start();
 
     emit detectionStarted(m_stats.totalCount);
+    emit recordsChanged();
     emit logMessage(QString("开始批量检测: 共 %1 张图片").arg(m_stats.totalCount));
 
     // 开始处理第一个任务
@@ -222,6 +231,7 @@ ImageDetectionResult AutoDetectionController::executeTask(const ImageDetectionTa
 void AutoDetectionController::processImageTask(const ImageDetectionTask& task)
 {
     m_taskInFlight = true;
+    m_taskTimer.start();
     // 不捕获 Controller；窗口关闭后等待的只有独立任务数据。
     m_watcher->setFuture(QtConcurrent::run([task] { return executeTask(task); }));
 }
@@ -232,6 +242,11 @@ void AutoDetectionController::onTaskFinished()
     const auto& task = m_tasks[m_currentIndex];
     const int currentIndex = m_currentIndex;
     const int totalCount = m_stats.totalCount;
+    auto& record = m_records[currentIndex];
+    record.result = imageResult;
+    record.status = imageResult.passed ? InspectionStatus::Passed : InspectionStatus::Failed;
+    record.completedAtMs = QDateTime::currentMSecsSinceEpoch();
+    record.elapsedMs = m_taskTimer.elapsed();
     // 更新统计
     m_stats.processedCount++;
     m_stats.elapsedMs = m_elapsedTimer.elapsed();
@@ -264,6 +279,7 @@ void AutoDetectionController::onTaskFinished()
     }
 
     m_reports.append(report);
+    emit recordsChanged();
 
     // 发送信号
     emit imageProcessed(currentIndex, task.imagePath, passed);

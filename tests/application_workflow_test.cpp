@@ -84,6 +84,41 @@ struct WorkspaceFixture {
 class ApplicationWorkflowTest : public QObject {
     Q_OBJECT
 private slots:
+    void batchRecordsKeepRoiDetailsAndStoppedTasksRemainPending() {
+        RoiManager rois;
+        for (int i = 0; i < 2; ++i) {
+            rois.switchToImage(rois.addImage(cv::Mat(20, 20, CV_8UC3, cv::Scalar(0)), QString::number(i)));
+            RoiConfig roi("part", QRectF(0, 0, 20, 20));
+            DetectionItem item("blob", DetectionType::Blob);
+            PipelineConfig config;
+            config.stepEnabled.fill(false);
+            config.judge.minRegionCount = 0;
+            item.savePipeline(config);
+            roi.detectionItems.append(item);
+            rois.addRoiConfig(roi);
+        }
+        AutoDetectionController controller(&rois);
+        connect(&controller, &AutoDetectionController::imageProcessed,
+            &controller, &AutoDetectionController::stopDetection);
+        QSignalSpy changed(&controller, &AutoDetectionController::recordsChanged);
+        controller.startDetection();
+        QCOMPARE(controller.records().size(), 2);
+        QCOMPARE(controller.records()[1].status, InspectionStatus::Pending);
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.isRunning(), 10000);
+        QCOMPARE(changed.size(), 2);
+        const auto records = controller.records();
+        QCOMPARE(records[0].status, InspectionStatus::Passed);
+        QVERIFY(records[0].completedAtMs > 0);
+        QVERIFY(records[0].elapsedMs >= 0);
+        QCOMPARE(records[0].result.roiResults.size(), 1);
+        QCOMPARE(records[0].result.roiResults.first().itemResults.size(), 1);
+        QVERIFY(!records[0].result.roiResults.first().itemResults.first().itemId.isEmpty());
+        QCOMPARE(records[1].status, InspectionStatus::Pending);
+        QCOMPARE(records[1].completedAtMs, 0);
+        rois.clear();
+        QCOMPARE(controller.records()[0].result.roiResults.first().roiName, QString("part"));
+    }
+
     void batchPanelReportsOutOfBoundsRoiAsFailure() {
         QTemporaryDir files;
         QVERIFY(files.isValid());

@@ -11,6 +11,7 @@
 #include "core/pipeline.h"
 #include "roi_manager.h"
 #include "data/detection_result_report.h"
+#include "data/inspection_record.h"
 
 struct ImageDetectionResult;
 template<class T> class QFutureWatcher;
@@ -115,6 +116,7 @@ public:
 
     /// 获取所有检测报告
     const QList<DetectionResultReport>& results() const { return m_reports; }
+    const QList<InspectionRecord>& records() const { return m_records; }
 
     /// 获取不合格图片列表
     QStringList failedImages() const { return m_failedImages; }
@@ -129,6 +131,7 @@ public:
                             QStatusBar* statusBar, QLabel* statusLabel);
 
 signals:
+    void recordsChanged();
     /// 检测开始
     void detectionStarted(int totalCount);
 
@@ -178,7 +181,9 @@ private:
 
     DetectionStats m_stats;
     QList<DetectionResultReport> m_reports;
+    QList<InspectionRecord> m_records;
     QStringList m_failedImages;
 
     QElapsedTimer m_elapsedTimer;       ///< 计时器
+    QElapsedTimer m_taskTimer;
 };
